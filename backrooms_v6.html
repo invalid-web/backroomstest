@@ -370,9 +370,10 @@ function buildChunkData(chunkX, chunkY) {
 
   // Carve a rare special liminal room: merge a 2x2 cell block into one open room
   let specialRoom = null;
-  if (hash2(chunkX, chunkY, 999) < 0.4) {
-    const rx = 1 + Math.floor(hash2(chunkX,chunkY,1000)*(N-3));
-    const ry = 1 + Math.floor(hash2(chunkX,chunkY,1001)*(N-3));
+  const isStartChunk = (chunkX === 0 && chunkY === 0);
+  if (isStartChunk || hash2(chunkX, chunkY, 999) < 0.4) {
+    const rx = isStartChunk ? 1 : 1 + Math.floor(hash2(chunkX,chunkY,1000)*(N-3));
+    const ry = isStartChunk ? 1 : 1 + Math.floor(hash2(chunkX,chunkY,1001)*(N-3));
     cellWalls[idx(rx,ry)].E = false; cellWalls[idx(rx+1,ry)].W = false;
     cellWalls[idx(rx,ry)].S = false; cellWalls[idx(rx,ry+1)].N = false;
     cellWalls[idx(rx+1,ry)].S = false; cellWalls[idx(rx+1,ry+1)].N = false;
@@ -383,8 +384,13 @@ function buildChunkData(chunkX, chunkY) {
     addEdge(baseGX+rx,baseGY+ry+1, baseGX+rx+1,baseGY+ry+1);
     const roomCenterX = (baseGX+rx+1)*CELL_SIZE;
     const roomCenterZ = (baseGY+ry+1)*CELL_SIZE;
-    const builderIdx = Math.floor(hash2(chunkX,chunkY,1002)*SPECIAL_ROOM_BUILDERS.length);
+    const builderIdx = isStartChunk
+      ? SPECIAL_ROOM_BUILDERS.indexOf(buildPoolRoom)
+      : Math.floor(hash2(chunkX,chunkY,1002)*SPECIAL_ROOM_BUILDERS.length);
     specialRoom = {builder: SPECIAL_ROOM_BUILDERS[builderIdx], cx: roomCenterX, cz: roomCenterZ, size: CELL_SIZE*2};
+    if (isStartChunk) {
+      window.__startRoomCenter = {x: roomCenterX, z: roomCenterZ};
+    }
   }
 
   const floorGeos=[], ceilGeos=[], wallGeos=[];
@@ -735,6 +741,11 @@ let lastHeartbeat = 0;
 // ================= INIT =================
 requestChunks(0,0);
 processBuildQueue(); processBuildQueue(); processBuildQueue();
+processBuildQueue(); processBuildQueue(); processBuildQueue();
+processBuildQueue(); processBuildQueue(); processBuildQueue();
+if (window.__startRoomCenter) {
+  controls.getObject().position.set(window.__startRoomCenter.x, EYE_HEIGHT, window.__startRoomCenter.z);
+}
 loadOverlay.style.display = 'none';
 blocker.style.display = 'flex';
 
