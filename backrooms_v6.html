@@ -68,7 +68,7 @@ const instructions = document.getElementById('instructions');
 const scene = new THREE.Scene();
 const BASE_FOG = new THREE.Color(0x6f6a4a);
 scene.background = BASE_FOG.clone();
-scene.fog = new THREE.Fog(BASE_FOG.clone(), 3, 18);
+scene.fog = new THREE.Fog(BASE_FOG.clone(), 2.2, 14);
 
 const camera = new THREE.PerspectiveCamera(74, window.innerWidth/window.innerHeight, 0.1, 150);
 camera.position.set(0, 1.7, 0);
@@ -84,7 +84,7 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-const ambient = new THREE.AmbientLight(0xfff2c0, 0.14);
+const ambient = new THREE.AmbientLight(0xfff2c0, 0.08);
 scene.add(ambient);
 const flicker = new THREE.PointLight(0xfff2c0, 1.0, 9, 2);
 scene.add(flicker);
@@ -98,9 +98,9 @@ scene.add(camera);
 // Flashlight modes cycle: 0 = off, 1 = dim wide, 2 = narrow bright, 3 = wide bright
 const FLASHLIGHT_MODES = [
   {intensity: 0,   angle: Math.PI/6,  penumbra: 0.4},
-  {intensity: 1.6, angle: Math.PI/5,  penumbra: 0.5},
-  {intensity: 4.5, angle: Math.PI/9,  penumbra: 0.25},
-  {intensity: 3.2, angle: Math.PI/4.2,penumbra: 0.45}
+  {intensity: 2.0, angle: Math.PI/5,  penumbra: 0.5},
+  {intensity: 5.2, angle: Math.PI/9,  penumbra: 0.25},
+  {intensity: 3.8, angle: Math.PI/4.2,penumbra: 0.45}
 ];
 let flashMode = 0;
 let FLASHLIGHT_BASE_INTENSITY = 0;
@@ -637,7 +637,7 @@ function buildChunkData(chunkX, chunkY) {
   for (let x=0;x<N;x++) for (let y=0;y<N;y++) {
     const wx=(baseGX+x)*CELL_SIZE, wz=(baseGY+y)*CELL_SIZE, ccx=wx+halfCS, ccz=wz+halfCS;
     if (hash2(baseGX+x,baseGY+y,11) < 0.06) {
-      const bulb = new THREE.PointLight(0xfff6c8, 0.45, 5.5, 2);
+      const bulb = new THREE.PointLight(0xfff6c8, 0.32, 4.5, 2);
       bulb.position.set(ccx, CEIL_Y-0.15, ccz);
       group.add(bulb);
       if (hash2(baseGX+x,baseGY+y,88) < 0.35) chunkFlickerLights.push(bulb);
@@ -1213,7 +1213,7 @@ function animate() {
       if (distToPlayer < 13 && t-lastHeartbeat > Math.max(0.3, distToPlayer/11)) {
         heartbeatPulse(proximity+0.3); lastHeartbeat = t;
       }
-      if (distToPlayer < 1.0 || sanity<=0) triggerJumpscare();
+      if (distToPlayer < 1.0) triggerJumpscare();
 
       if (staticGain) {
         const targetGain = distToPlayer > 16 ? 0 : proximity*proximity*0.5;
