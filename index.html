@@ -1465,15 +1465,20 @@ function animate() {
 
   // --- Insanity-driven sensory distortion (feature 1) ---
   if (insanityFactor > 0.02 && camera) {
-    const wobble = insanityFactor * 0.005;
-    camera.rotation.z += (Math.sin(t*4.3)*wobble - camera.rotation.z*0.02) * 0.15;
-    const insanityDistort = insanityFactor * insanityFactor * 0.6;
+    // Absolute, clamped roll target (not accumulated) so it can never runaway or stack with CSS rotation
+    const maxRollDeg = 2.2; // small, noticeable tilt cap in degrees
+    const targetRoll = Math.sin(t*1.6) * insanityFactor * (maxRollDeg * Math.PI/180);
+    camera.rotation.z += (targetRoll - camera.rotation.z) * Math.min(1, delta*2.5);
+    // Insanity contributes gently to the existing proximity-based distortion, capped low
+    const insanityDistort = insanityFactor * insanityFactor * 0.18;
     smoothedDistort = Math.max(smoothedDistort, smoothedDistort + (insanityDistort - smoothedDistort) * 0.03);
     applyDistortion(smoothedDistort, t);
     if (audioCtx && Math.random() < insanityFactor * 0.006) playInsanityWhisper();
     if (controls && controls.getObject) {
       updateAnomalies(delta, controls.getObject().position);
     }
+  } else if (camera) {
+    camera.rotation.z += (0 - camera.rotation.z) * Math.min(1, delta*2.5);
   }
   updatePixiOverlay(delta);
 
