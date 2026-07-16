@@ -68,23 +68,41 @@ const instructions = document.getElementById('instructions');
 const scene = new THREE.Scene();
 const BASE_FOG = new THREE.Color(0x6f6a4a);
 scene.background = BASE_FOG.clone();
-scene.fog = new THREE.Fog(BASE_FOG.clone(), 2.2, 14);
+scene.fog = new THREE.Fog(BASE_FOG.clone(), 1.0, 24);
 
 const camera = new THREE.PerspectiveCamera(74, window.innerWidth/window.innerHeight, 0.1, 150);
 camera.position.set(0, 1.7, 0);
 
 const renderer = new THREE.WebGLRenderer({antialias:false, powerPreference:'high-performance'});
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.2));
 document.body.appendChild(renderer.domElement);
 
-window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth/window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
+const PIXEL_HEIGHT = 180;
+const screenScene = new THREE.Scene();
+const screenCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+const lowResTarget = new THREE.WebGLRenderTarget(320, 180, {
+  magFilter: THREE.NearestFilter,
+  minFilter: THREE.NearestFilter,
+  depthBuffer: true,
+  stencilBuffer: false
 });
+const screenMat = new THREE.MeshBasicMaterial({ map: lowResTarget.texture });
+const screenQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), screenMat);
+screenScene.add(screenQuad);
 
-const ambient = new THREE.AmbientLight(0xfff2c0, 0.08);
+function resizeRenderer() {
+  const aspect = window.innerWidth / window.innerHeight;
+  const targetHeight = PIXEL_HEIGHT;
+  const targetWidth = Math.max(1, Math.round(targetHeight * aspect));
+  lowResTarget.setSize(targetWidth, targetHeight);
+  camera.aspect = aspect;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight, false);
+  renderer.setPixelRatio(1);
+}
+resizeRenderer();
+window.addEventListener('resize', resizeRenderer);
+
+const ambient = new THREE.AmbientLight(0xfff2c0, 0.02);
 scene.add(ambient);
 const flicker = new THREE.PointLight(0xfff2c0, 1.0, 9, 2);
 scene.add(flicker);
@@ -637,7 +655,7 @@ function buildChunkData(chunkX, chunkY) {
   for (let x=0;x<N;x++) for (let y=0;y<N;y++) {
     const wx=(baseGX+x)*CELL_SIZE, wz=(baseGY+y)*CELL_SIZE, ccx=wx+halfCS, ccz=wz+halfCS;
     if (hash2(baseGX+x,baseGY+y,11) < 0.06) {
-      const bulb = new THREE.PointLight(0xfff6c8, 0.32, 4.5, 2);
+      const bulb = new THREE.PointLight(0xfff6c8, 0.18, 3.5, 2);
       bulb.position.set(ccx, CEIL_Y-0.15, ccz);
       group.add(bulb);
       if (hash2(baseGX+x,baseGY+y,88) < 0.35) chunkFlickerLights.push(bulb);
@@ -1045,7 +1063,10 @@ function applyDistortion(amt, t) {
 
 function animate() {
   requestAnimationFrame(animate);
-  if (gameOver) { renderer.render(scene, camera); return; }
+  if (gameOver) { renderer.setRenderTarget(lowResTarget);
+  renderer.render(scene, camera);
+  renderer.setRenderTarget(null);
+  renderer.render(screenScene, screenCamera); return; }
   const delta = Math.min(clock.getDelta(), 0.05);
   const t = performance.now()*0.001;
 
@@ -1243,7 +1264,10 @@ function animate() {
 
   frameCount++; fpsAccum += delta;
   if (fpsAccum >= 0.5) { fpsSpan.textContent = Math.round(frameCount/fpsAccum); frameCount=0; fpsAccum=0; }
+  renderer.setRenderTarget(lowResTarget);
   renderer.render(scene, camera);
+  renderer.setRenderTarget(null);
+  renderer.render(screenScene, screenCamera);
 }
 animate();
 </script>
