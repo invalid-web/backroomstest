@@ -85,8 +85,9 @@ scene.add(flicker);
 
 const flashlight = new THREE.SpotLight(0xffffff, 0, 18, Math.PI/6, 0.4, 1.4);
 camera.add(flashlight);
-flashlight.target.position.set(0,0,-1);
+flashlight.target.position.set(0,0.05,-1);
 camera.add(flashlight.target);
+flashlight.position.set(0, 0.15, 0.1);
 scene.add(camera);
 // Flashlight modes cycle: 0 = off, 1 = dim wide, 2 = narrow bright, 3 = wide bright
 const FLASHLIGHT_MODES = [
@@ -272,7 +273,6 @@ function buildStairway() {
 const specialRoomMats = {
   ceilFurn: new THREE.MeshStandardMaterial({color:0x5c4a35, roughness:0.7}),
   escherStep: new THREE.MeshStandardMaterial({color:0x9c8d5f, roughness:0.6}),
-  poolWater: new THREE.MeshStandardMaterial({color:0x1a3a4a, roughness:0.05, metalness:0.6, transparent:true, opacity:0.85}),
   deskWood: new THREE.MeshStandardMaterial({color:0x6b4a2f, roughness:0.7}),
   chalkboard: new THREE.MeshStandardMaterial({color:0x0d2b1a, roughness:0.8})
 };
@@ -312,15 +312,58 @@ function buildEscherRoom(cx, cz, size) {
   return g;
 }
 
-function buildPoolRoom(cx, cz, size) {
+const chessMat = {
+  white: new THREE.MeshStandardMaterial({color:0xe8e4d8, roughness:0.5}),
+  black: new THREE.MeshStandardMaterial({color:0x1c1c1c, roughness:0.5}),
+  tile: new THREE.MeshStandardMaterial({color:0xcac2a8, roughness:0.8})
+};
+function buildChessPawn(size) {
   const g = new THREE.Group();
-  const pool = new THREE.Mesh(new THREE.PlaneGeometry(size*0.75, size*0.75), specialRoomMats.poolWater);
-  pool.rotation.x = -Math.PI/2;
-  pool.position.set(cx, 0.08, cz);
-  g.add(pool);
-  const rim = new THREE.Mesh(new THREE.BoxGeometry(size*0.8,0.15,size*0.8), specialRoomMats.escherStep);
-  rim.position.set(cx, 0.02, cz);
-  g.add(rim);
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(size*0.28, size*0.32, size*0.15, 16), chessMat.white);
+  base.position.y = size*0.075;
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(size*0.14, size*0.22, size*0.5, 16), chessMat.white);
+  body.position.y = size*0.15 + size*0.25;
+  const head = new THREE.Mesh(new THREE.SphereGeometry(size*0.18, 16, 16), chessMat.white);
+  head.position.y = size*0.15 + size*0.5 + size*0.15;
+  g.add(base, body, head);
+  return g;
+}
+function buildChessKing(size) {
+  const g = new THREE.Group();
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(size*0.32, size*0.38, size*0.18, 16), chessMat.black);
+  base.position.y = size*0.09;
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(size*0.16, size*0.26, size*0.9, 16), chessMat.black);
+  body.position.y = size*0.18 + size*0.45;
+  const crossV = new THREE.Mesh(new THREE.BoxGeometry(size*0.08,size*0.28,size*0.08), chessMat.black);
+  crossV.position.y = size*0.18 + size*0.9 + size*0.14;
+  const crossH = new THREE.Mesh(new THREE.BoxGeometry(size*0.22,size*0.08,size*0.08), chessMat.black);
+  crossH.position.y = size*0.18 + size*0.9 + size*0.16;
+  g.add(base, body, crossV, crossH);
+  return g;
+}
+function buildChessRoom(cx, cz, size) {
+  const g = new THREE.Group();
+  const tiles = 6;
+  const tileSize = size/tiles;
+  for (let i=0;i<tiles;i++) for (let j=0;j<tiles;j++) {
+    const isWhite = (i+j)%2===0;
+    const tile = new THREE.Mesh(new THREE.PlaneGeometry(tileSize,tileSize), isWhite?chessMat.white:chessMat.black);
+    tile.rotation.x = -Math.PI/2;
+    tile.position.set(cx - size/2 + tileSize*(i+0.5), 0.03, cz - size/2 + tileSize*(j+0.5));
+    g.add(tile);
+  }
+  const pieceScale = size*0.45;
+  const king = buildChessKing(pieceScale);
+  king.position.set(cx - size*0.2, 0, cz - size*0.15);
+  king.rotation.y = 0.3;
+  g.add(king);
+  const pawn1 = buildChessPawn(pieceScale*0.7);
+  pawn1.position.set(cx + size*0.22, 0, cz + size*0.1);
+  g.add(pawn1);
+  const pawn2 = buildChessPawn(pieceScale*0.6);
+  pawn2.position.set(cx + size*0.05, 0, cz - size*0.28);
+  pawn2.rotation.y = 1.1;
+  g.add(pawn2);
   return g;
 }
 
@@ -339,7 +382,7 @@ function buildClassroomRoom(cx, cz, size) {
   return g;
 }
 
-const SPECIAL_ROOM_BUILDERS = [buildUpsideRoom, buildEscherRoom, buildPoolRoom, buildClassroomRoom];
+const SPECIAL_ROOM_BUILDERS = [buildUpsideRoom, buildEscherRoom, buildChessRoom, buildClassroomRoom];
 
 function buildChunkData(chunkX, chunkY) {
   const chunkFlickerLights = [];
@@ -385,7 +428,7 @@ function buildChunkData(chunkX, chunkY) {
     const roomCenterX = (baseGX+rx+1)*CELL_SIZE;
     const roomCenterZ = (baseGY+ry+1)*CELL_SIZE;
     const builderIdx = isStartChunk
-      ? SPECIAL_ROOM_BUILDERS.indexOf(buildPoolRoom)
+      ? SPECIAL_ROOM_BUILDERS.indexOf(buildChessRoom)
       : Math.floor(hash2(chunkX,chunkY,1002)*SPECIAL_ROOM_BUILDERS.length);
     specialRoom = {builder: SPECIAL_ROOM_BUILDERS[builderIdx], cx: roomCenterX, cz: roomCenterZ, size: CELL_SIZE*2};
     if (isStartChunk) {
@@ -500,7 +543,7 @@ function buildChunkData(chunkX, chunkY) {
   if (specialRoom) {
     const roomMesh = specialRoom.builder(specialRoom.cx, specialRoom.cz, specialRoom.size);
     group.add(roomMesh);
-    if (specialRoom.builder === buildEscherRoom || specialRoom.builder === buildPoolRoom) {
+    if (specialRoom.builder === buildEscherRoom || specialRoom.builder === buildChessRoom) {
       const roomLight = new THREE.PointLight(0xbfd8ff, 0.9, specialRoom.size*1.5, 2);
       roomLight.position.set(specialRoom.cx, CEIL_Y-0.3, specialRoom.cz);
       group.add(roomLight);
@@ -708,6 +751,28 @@ function initAudio() {
 }
 controls.addEventListener('lock', () => { if(!audioCtx) initAudio(); });
 
+let bobPhase = 0;
+let footstepTimer = 0;
+function playFootstep(sprinting) {
+  if (!audioCtx) return;
+  const bufferSize = audioCtx.sampleRate * 0.12;
+  const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i=0;i<bufferSize;i++) {
+    const envelope = 1 - i/bufferSize;
+    data[i] = (Math.random()*2-1) * envelope * envelope;
+  }
+  const src = audioCtx.createBufferSource();
+  src.buffer = buffer;
+  const filter = audioCtx.createBiquadFilter();
+  filter.type = 'lowpass';
+  filter.frequency.value = sprinting ? 900 : 500;
+  const gain = audioCtx.createGain();
+  gain.gain.value = sprinting ? 0.22 : 0.1;
+  src.connect(filter).connect(gain).connect(audioCtx.destination);
+  src.start();
+}
+
 function playChime() {
   if (!audioCtx) return;
   const notes = [880, 1174.66, 1567.98];
@@ -799,7 +864,8 @@ function animate() {
     const moveVec = new THREE.Vector3();
     moveVec.addScaledVector(forward, -dir.z);
     moveVec.addScaledVector(right, dir.x);
-    if (moveVec.lengthSq()>0) moveVec.normalize().multiplyScalar(speed*delta);
+    const isMoving = moveVec.lengthSq() > 0;
+    if (isMoving) moveVec.normalize().multiplyScalar(speed*delta);
 
     const obj = controls.getObject();
     obj.position.x += moveVec.x;
@@ -810,6 +876,31 @@ function animate() {
     velocityY -= GRAVITY*delta;
     obj.position.y += velocityY*delta;
     if (obj.position.y <= EYE_HEIGHT) { obj.position.y = EYE_HEIGHT; velocityY=0; onGround=true; }
+
+    // Natural flashlight + camera bob while walking on ground
+    const isSprinting = keys['ShiftLeft'] || keys['ShiftRight'];
+    if (isMoving && onGround) {
+      bobPhase += delta * (isSprinting ? 14 : 9);
+      const bobAmt = isSprinting ? 0.055 : 0.03;
+      flashlight.position.y = 0.15 + Math.sin(bobPhase) * bobAmt;
+      flashlight.position.x = Math.cos(bobPhase*0.5) * bobAmt * 0.6;
+    } else {
+      bobPhase = 0;
+      flashlight.position.y += (0.15 - flashlight.position.y) * 0.15;
+      flashlight.position.x += (0 - flashlight.position.x) * 0.15;
+    }
+
+    // Footstep audio: gentle walk, louder/faster when sprinting
+    if (isMoving && onGround) {
+      const stepInterval = isSprinting ? 0.28 : 0.46;
+      footstepTimer -= delta;
+      if (footstepTimer <= 0) {
+        playFootstep(isSprinting);
+        footstepTimer = stepInterval;
+      }
+    } else {
+      footstepTimer = 0;
+    }
 
     flicker.position.set(obj.position.x, obj.position.y+0.9, obj.position.z);
     flicker.intensity = 1.0 + Math.sin(t*10)*0.1 + (Math.random()-0.5)*0.05;
