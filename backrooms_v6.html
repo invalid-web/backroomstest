@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Backrooms: Entity 0</title>
+<style>
+  html,body{margin:0;padding:0;overflow:hidden;background:#000;font-family:monospace;}
+  #blocker{position:absolute;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.9);
+    display:flex;align-items:center;justify-content:center;color:#c9b458;z-index:10;text-align:center;}
+  #instructions{max-width:540px;line-height:1.6;}
+  #instructions code{background:#222;padding:2px 6px;border-radius:3px;}
+  #crosshair{position:absolute;top:50%;left:50%;width:6px;height:6px;margin:-3px;
+    background:rgba(255,255,255,0.7);border-radius:50%;z-index:5;pointer-events:none;}
+  #hud{position:absolute;bottom:10px;left:10px;color:#c9b458;z-index:5;font-size:12px;opacity:0.7;}
+  #sanityBar{position:absolute;bottom:10px;right:10px;width:160px;height:10px;border:1px solid #c9b458;z-index:5;}
+  #sanityFill{background:#c9b458;height:100%;width:100%;transition:width 0.3s;}
+  #vignette{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:4;
+    box-shadow: inset 0 0 150px 60px rgba(0,0,0,0.8); opacity:0; transition:opacity 0.4s;}
+  #jumpscare{position:absolute;top:0;left:0;width:100%;height:100%;background:#000;z-index:20;
+    display:none;align-items:center;justify-content:center;}
+  #objective{position:absolute;top:10px;left:10px;color:#c9b458;z-index:5;font-size:12px;opacity:0.85;max-width:280px;}
+  #loadOverlay{position:absolute;top:0;left:0;width:100%;height:100%;background:#000;color:#c9b458;
+    display:flex;align-items:center;justify-content:center;z-index:15;font-size:14px;}
+</style>
+</head>
+<body>
+<div id="loadOverlay">Initializing...</div>
+<div id="blocker" style="display:none">
+  <div id="instructions">
+    <h2>THE BACKROOMS</h2>
+    <p>Click to enter<br><br>
+    WASD - move | SPACE - jump | SHIFT - sprint<br>
+    MOUSE - look around | F - flashlight | ESC - pause<br><br>
+    <span style="color:#ff8888">Something else is in here with you. It knows the halls too.</span></p>
+  </div>
+</div>
+<div id="crosshair"></div>
+<div id="hud">Cell: <span id="cellPos">0,0</span> | FPS: <span id="fps">--</span></div>
+<div id="objective">Objective: find the 5 flickering exit signs.<br>Found: <span id="foundCount">0</span>/5</div>
+<div id="sanityBar"><div id="sanityFill"></div></div>
+<div id="vignette"></div>
+<div id="jumpscare"></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+
+const loadOverlay = document.getElementById('loadOverlay');
+const blocker = document.getElementById('blocker');
+const instructions = document.getElementById('instructions');
+
+// ================= CORE SETUP =================
+const scene = new THREE.Scene();
+const BASE_FOG = new THREE.Color(0x6f6a4a);
+scene.background = BASE_FOG.clone();
+scene.fog = new THREE.Fog(BASE_FOG.clone(), 3, 18);
+
+const camera = new THREE.PerspectiveCamera(74, window.innerWidth/window.innerHeight, 0.1, 150);
+camera.position.set(0, 1.7, 0);
+
+const renderer = new THREE.WebGLRenderer({antialias:false, powerPreference:'high-performance'});
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.2));
+document.body.appendChild(renderer.domElement);
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+const ambient = new THREE.AmbientLight(0xfff2c0, 0.3);
+scene.add(ambient);
+const flicker = new THREE.PointLight(0xfff2c0, 1.0, 9, 2);
+scene.add(flicker);
+
+const flashlight = new THREE.SpotLight(0xffffff, 0, 18, Math.PI/6, 0.4, 1.4);
+camera.add(flashlight);
+flashlight.target.position.set(0,0,-1);
+camera.add(flashlight.target);
+scene.add(camera);
+let flashOn = false;
+const FLASHLIGHT_BASE_INTENSITY = 3.4;
+let flashFlickerTimer = 3 + Math.random()*6;
+
+// ================= CONTROLS =================
+const controls = new PointerLockControls(camera, document.body);
+blocker.addEventListener('click', () => controls.lock());
+controls.addEventListener('lock', () => blocker.style.display = 'none');
+controls.addEventListener('unlock', () => { if(!gameOver) blocker.style.display = 'flex'; });
+document.addEventListener('pointerlockerror', () => {
+  instructions.innerHTML = '<h2>THE BACKROOMS</h2><p style="color:#ff6666">Pointer Lock failed. Serve over http://.</p>';
+});
+scene.add(controls.getObject());
+
+const keys = {};
+document.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (e.code === 'KeyF') { flashOn = !flashOn; flashlight.intensity = flashOn ? FLASHLIGHT_BASE_INTENSITY : 0; }
+});
+document.addEventListener('keyup', e => keys[e.code] = false);
+
+let velocityY = 0, onGround = true, gameOver = false;
+const GRAVITY = 22, JUMP_SPEED = 7.0, WALK_SPEED = 3.6, SPRINT_SPEED = 6.2, EYE_HEIGHT = 1.7;
+
+// ================= MAZE (real recursive-backtracker corridors) =================
+// Each "chunk" is an NxN grid of maze cells. Cells are CELL_SIZE apart (corridor width).
+// Walls between cells are thick boxes (office-wall style), not thin planes.
+const CELL_SIZE = 3.2;          // corridor width - narrower = more hallway-like
+const WALL_THICK = 0.45;        // thick office-style walls
+const WALL_HEIGHT = 3.0, CEIL_Y = WALL_HEIGHT;
+const MAZE_N = 8;               // 8x8 maze cells per chunk
+const RENDER_RADIUS = 1;        // 3x3 chunks loaded at once
+const MAX_CACHED_CHUNKS = 12;
+const SEED = Math.floor(Math.random()*1000000);
+
+function hash2(x, y, salt=0) {
+  let h = Math.imul(x, 374761393) + Math.imul(y, 668265263) + Math.imul(salt, 2246822519) + SEED*2654435761;
+  h = (h ^ (h >>> 13)) * 1274126177;
+  h = h ^ (h >>> 16);
+  return (h >>> 0) / 4294967295;
+}
+function seededShuffle(arr, sx, sy, saltBase) {
+  for (let i = arr.length-1; i>0; i--) {
+    const r = hash2(sx*1000+i, sy*1000+saltBase, i);
+    const j = Math.floor(r*(i+1));
+    [arr[i],arr[j]] = [arr[j],arr[i]];
+  }
+  return arr;
+}
+
+// Global open-passage graph: key "gx,gy" (global cell coords) -> Set of neighbor keys
+const graph = new Map();
+function gKey(gx,gy){ return gx+','+gy; }
+function addEdge(gx1,gy1,gx2,gy2) {
+  const k1=gKey(gx1,gy1), k2=gKey(gx2,gy2);
+  if (!graph.has(k1)) graph.set(k1, new Set());
+  if (!graph.has(k2)) graph.set(k2, new Set());
+  graph.get(k1).add(k2);
+  graph.get(k2).add(k1);
+}
+
+// Generate a perfect maze (iterative recursive-backtracker) for one chunk, deterministic per chunk coords
+function generateMazeCells(chunkX, chunkY) {
+  const N = MAZE_N;
+  const visited = new Array(N*N).fill(false);
+  const walls = new Array(N*N).fill(null).map(()=>({N:true,S:true,E:true,W:true}));
+  const idx = (x,y)=>y*N+x;
+  const stack = [[0,0]];
+  visited[0]=true;
+  let steps = 0;
+  while (stack.length && steps < N*N*4) {
+    steps++;
+    const [cx,cy] = stack[stack.length-1];
+    const neighbors = [];
+    if (cy>0 && !visited[idx(cx,cy-1)]) neighbors.push(['N',cx,cy-1]);
+    if (cy<N-1 && !visited[idx(cx,cy+1)]) neighbors.push(['S',cx,cy+1]);
+    if (cx>0 && !visited[idx(cx-1,cy)]) neighbors.push(['W',cx-1,cy]);
+    if (cx<N-1 && !visited[idx(cx+1,cy)]) neighbors.push(['E',cx+1,cy]);
+    if (!neighbors.length) { stack.pop(); continue; }
+    seededShuffle(neighbors, chunkX*97+cx, chunkY*97+cy, steps);
+    const [dir,nx,ny] = neighbors[0];
+    if (dir==='N') { walls[idx(cx,cy)].N=false; walls[idx(nx,ny)].S=false; }
+    if (dir==='S') { walls[idx(cx,cy)].S=false; walls[idx(nx,ny)].N=false; }
+    if (dir==='E') { walls[idx(cx,cy)].E=false; walls[idx(nx,ny)].W=false; }
+    if (dir==='W') { walls[idx(cx,cy)].W=false; walls[idx(nx,ny)].E=false; }
+    visited[idx(nx,ny)] = true;
+    stack.push([nx,ny]);
+  }
+  return walls;
+}
+
+// Deterministic connector: for each chunk edge, open exactly one boundary cell to match neighbor chunk
+function getConnectorIndex(chunkX, chunkY, edge) {
+  // edge: 'E' (to chunkX+1), 'S' (to chunkY+1) -- computed once per edge pair, shared by both chunks
+  const a = edge==='E' ? chunkX : chunkX;
+  const b = edge==='E' ? chunkY : chunkY;
+  return Math.floor(hash2(chunkX*3+ (edge==='E'?1:0), chunkY*3+(edge==='S'?1:0), 777) * MAZE_N);
+}
+
+// ================= MATERIALS / GEOMETRY (shared, merged per chunk = few draw calls) =================
+const floorMat = new THREE.MeshStandardMaterial({color: 0x86794f, roughness:0.95});
+const ceilMat = new THREE.MeshStandardMaterial({color: 0xafa574, roughness:1.0});
+const wallMat = new THREE.MeshStandardMaterial({color: 0x9c8d5f, roughness:0.8});
+const entityMat = new THREE.MeshStandardMaterial({color: 0x080808, roughness:0.9});
+const entityGeo = new THREE.CapsuleGeometry(0.32, 1.35, 4, 6);
+
+function makeExitTexture() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256; canvas.height = 128;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#8a0000';
+  ctx.fillRect(0,0,256,128);
+  ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 6;
+  ctx.strokeRect(6,6,244,116);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 64px monospace';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('EXIT', 128, 68);
+  return new THREE.CanvasTexture(canvas);
+}
+const exitTexture = makeExitTexture();
+const signGeo = new THREE.BoxGeometry(0.7, 0.35, 0.12);
+function makeSignMaterials() {
+  const faceMat = new THREE.MeshStandardMaterial({map: exitTexture, emissive:0x660000, emissiveMap: exitTexture, emissiveIntensity:1.2, roughness:0.5});
+  const edgeMat = new THREE.MeshStandardMaterial({color:0x330000, emissive:0x440000, roughness:0.6});
+  return [edgeMat, edgeMat, edgeMat, edgeMat, faceMat, faceMat];
+}
+
+// ================= CHUNK BUILD =================
+const chunks = new Map();
+const buildQueue = [];
+const queuedSet = new Set();
+const allSigns = [];
+function chunkKey(cx,cy){ return cx+','+cy; }
+
+const flickerLights = [];
+
+const doorFrameMat = new THREE.MeshStandardMaterial({color:0x4a4030, roughness:0.7});
+const doorPanelMat = new THREE.MeshStandardMaterial({color:0x5c3b2a, roughness:0.6});
+function buildDoorFrame() {
+  const g = new THREE.Group();
+  const postGeo = new THREE.BoxGeometry(0.15, 2.2, 0.15);
+  const topGeo = new THREE.BoxGeometry(1.1, 0.15, 0.15);
+  const leftPost = new THREE.Mesh(postGeo, doorFrameMat); leftPost.position.set(-0.5,1.1,0);
+  const rightPost = new THREE.Mesh(postGeo, doorFrameMat); rightPost.position.set(0.5,1.1,0);
+  const top = new THREE.Mesh(topGeo, doorFrameMat); top.position.set(0,2.2,0);
+  const panel = new THREE.Mesh(new THREE.BoxGeometry(0.9,2.0,0.05), doorPanelMat);
+  panel.position.set(0,1.0,0.05);
+  g.add(leftPost,rightPost,top,panel);
+  return g;
+}
+function buildStairway() {
+  const g = new THREE.Group();
+  const stepGeo = new THREE.BoxGeometry(1.0, 0.18, 0.32);
+  const stepMat = new THREE.MeshStandardMaterial({color:0x8f8458, roughness:0.9});
+  for (let i=0;i<7;i++) {
+    const step = new THREE.Mesh(stepGeo, stepMat);
+    step.position.set(0, 0.09+i*0.18, -i*0.32);
+    g.add(step);
+  }
+  const railGeo = new THREE.BoxGeometry(0.06,1.1,0.06);
+  for (let i=0;i<7;i+=2) {
+    const rail = new THREE.Mesh(railGeo, doorFrameMat);
+    rail.position.set(0.48, 0.55+i*0.18, -i*0.32);
+    g.add(rail);
+  }
+  return g;
+}
+
+function buildChunkData(chunkX, chunkY) {
+  const N = MAZE_N;
+  const cellWalls = generateMazeCells(chunkX, chunkY);
+  const idx = (x,y)=>y*N+x;
+  const baseGX = chunkX*N, baseGY = chunkY*N;
+
+  // Register graph edges for open (non-wall) passages within this chunk
+  for (let x=0;x<N;x++) for (let y=0;y<N;y++) {
+    const w = cellWalls[idx(x,y)];
+    const gx = baseGX+x, gy = baseGY+y;
+    if (!w.E && x<N-1) addEdge(gx,gy,gx+1,gy);
+    if (!w.S && y<N-1) addEdge(gx,gy,gx,gy+1);
+  }
+  // Connectors to neighbor chunks (open one boundary wall each direction, mirrored on neighbor build)
+  const connE = getConnectorIndex(chunkX,chunkY,'E');
+  const connS = getConnectorIndex(chunkX,chunkY,'S');
+  cellWalls[idx(N-1,connE)].E = false;
+  cellWalls[idx(connS,N-1)].S = false;
+  addEdge(baseGX+N-1, baseGY+connE, baseGX+N, baseGY+connE);
+  addEdge(baseGX+connS, baseGY+N-1, baseGX+connS, baseGY+N);
+  // Also open our own west/north side to match neighbor's connector (mirror calc using neighbor's coords)
+  const connWfromNeighbor = getConnectorIndex(chunkX-1,chunkY,'E');
+  cellWalls[idx(0,connWfromNeighbor)].W = false;
+  const connNfromNeighbor = getConnectorIndex(chunkX,chunkY-1,'S');
+  cellWalls[idx(connNfromNeighbor,0)].N = false;
+
+  const floorGeos=[], ceilGeos=[], wallGeos=[];
+  const colliders = [];
+  const signs = [];
+  const halfCS = CELL_SIZE/2;
+
+  const baseFloorGeo = new THREE.PlaneGeometry(CELL_SIZE, CELL_SIZE);
+  const baseCeilGeo = new THREE.PlaneGeometry(CELL_SIZE, CELL_SIZE);
+
+  for (let x=0;x<N;x++) {
+    for (let y=0;y<N;y++) {
+      const w = cellWalls[idx(x,y)];
+      const wx = (baseGX+x)*CELL_SIZE, wz = (baseGY+y)*CELL_SIZE;
+      const ccx = wx+halfCS, ccz = wz+halfCS;
+
+      const fg = baseFloorGeo.clone();
+      fg.rotateX(-Math.PI/2); fg.translate(ccx,0,ccz);
+      floorGeos.push(fg);
+      const cg = baseCeilGeo.clone();
+      cg.rotateX(Math.PI/2); cg.translate(ccx,CEIL_Y,ccz);
+      ceilGeos.push(cg);
+
+      // Thick box walls (office-style), placed at cell edges, matching collider exactly
+      if (w.N) {
+        const g = new THREE.BoxGeometry(CELL_SIZE+WALL_THICK, WALL_HEIGHT, WALL_THICK);
+        g.translate(ccx, WALL_HEIGHT/2, wz);
+        wallGeos.push(g);
+        colliders.push({minX:wx-WALL_THICK/2,maxX:wx+CELL_SIZE+WALL_THICK/2,minZ:wz-WALL_THICK/2,maxZ:wz+WALL_THICK/2});
+      }
+      if (w.S) {
+        const g = new THREE.BoxGeometry(CELL_SIZE+WALL_THICK, WALL_HEIGHT, WALL_THICK);
+        g.translate(ccx, WALL_HEIGHT/2, wz+CELL_SIZE);
+        wallGeos.push(g);
+        colliders.push({minX:wx-WALL_THICK/2,maxX:wx+CELL_SIZE+WALL_THICK/2,minZ:wz+CELL_SIZE-WALL_THICK/2,maxZ:wz+CELL_SIZE+WALL_THICK/2});
+      }
+      if (w.W) {
+        const g = new THREE.BoxGeometry(WALL_THICK, WALL_HEIGHT, CELL_SIZE+WALL_THICK);
+        g.translate(wx, WALL_HEIGHT/2, ccz);
+        wallGeos.push(g);
+        colliders.push({minX:wx-WALL_THICK/2,maxX:wx+WALL_THICK/2,minZ:wz-WALL_THICK/2,maxZ:wz+CELL_SIZE+WALL_THICK/2});
+      }
+      if (w.E) {
+        const g = new THREE.BoxGeometry(WALL_THICK, WALL_HEIGHT, CELL_SIZE+WALL_THICK);
+        g.translate(wx+CELL_SIZE, WALL_HEIGHT/2, ccz);
+        wallGeos.push(g);
+        colliders.push({minX:wx+CELL_SIZE-WALL_THICK/2,maxX:wx+CELL_SIZE+WALL_THICK/2,minZ:wz-WALL_THICK/2,maxZ:wz+CELL_SIZE+WALL_THICK/2});
+      }
+    }
+  }
+  baseFloorGeo.dispose(); baseCeilGeo.dispose();
+
+  const group = new THREE.Group();
+  if (floorGeos.length) {
+    const fm = mergeGeometries(floorGeos, false);
+    group.add(new THREE.Mesh(fm, floorMat));
+    floorGeos.forEach(g=>g.dispose());
+    const cm = mergeGeometries(ceilGeos, false);
+    group.add(new THREE.Mesh(cm, ceilMat));
+    ceilGeos.forEach(g=>g.dispose());
+  }
+  if (wallGeos.length) {
+    const wm = mergeGeometries(wallGeos, false);
+    group.add(new THREE.Mesh(wm, wallMat));
+    wallGeos.forEach(g=>g.dispose());
+  }
+
+  // Sparse lighting + exit signs, placed at open cell centers only
+  for (let x=0;x<N;x++) for (let y=0;y<N;y++) {
+    const wx=(baseGX+x)*CELL_SIZE, wz=(baseGY+y)*CELL_SIZE, ccx=wx+halfCS, ccz=wz+halfCS;
+    if (hash2(baseGX+x,baseGY+y,11) < 0.06) {
+      const bulb = new THREE.PointLight(0xfff6c8, 0.7, 6.5, 2);
+      bulb.position.set(ccx, CEIL_Y-0.15, ccz);
+      group.add(bulb);
+      if (hash2(baseGX+x,baseGY+y,88) < 0.35) flickerLights.push(bulb);
+    }
+    // Liminal doorframes in weird random spots (standalone, not blocking passage)
+    if (hash2(baseGX+x,baseGY+y,222) < 0.01) {
+      const frame = buildDoorFrame();
+      frame.position.set(ccx, 0, ccz);
+      frame.rotation.y = Math.floor(hash2(baseGX+x,baseGY+y,223)*4) * (Math.PI/2);
+      group.add(frame);
+    }
+    // Liminal stairway fragments (going nowhere, purely atmospheric)
+    if (hash2(baseGX+x,baseGY+y,333) < 0.006) {
+      const stair = buildStairway();
+      stair.position.set(ccx, 0, ccz);
+      stair.rotation.y = Math.floor(hash2(baseGX+x,baseGY+y,334)*4) * (Math.PI/2);
+      group.add(stair);
+    }
+    if (hash2(baseGX+x,baseGY+y,55) < 0.008) {
+      const w = cellWalls[idx(x,y)];
+      const facing = !w.N ? 'N' : !w.S ? 'S' : !w.E ? 'E' : 'W';
+      const sign = new THREE.Mesh(signGeo, makeSignMaterials());
+      if (facing==='N') { sign.position.set(ccx,1.7,wz+0.3); sign.rotation.y = 0; }
+      else if (facing==='S') { sign.position.set(ccx,1.7,wz+CELL_SIZE-0.3); sign.rotation.y=Math.PI; }
+      else if (facing==='E') { sign.position.set(wx+CELL_SIZE-0.3,1.7,ccz); sign.rotation.y=-Math.PI/2; }
+      else { sign.position.set(wx+0.3,1.7,ccz); sign.rotation.y=Math.PI/2; }
+      group.add(sign);
+      const glow = new THREE.PointLight(0xff2222, 0.9, 3.5, 2);
+      glow.position.copy(sign.position);
+      group.add(glow);
+      signs.push({mesh:sign, worldX:ccx, worldZ:ccz, found:false});
+    }
+  }
+
+  return {group, colliders, signs};
+}
+
+function commitChunk(chunkX, chunkY, data) {
+  scene.add(data.group);
+  chunks.set(chunkKey(chunkX,chunkY), {...data, lastUsed: performance.now()});
+  for (const s of data.signs) allSigns.push(s);
+}
+function removeChunk(key) {
+  const c = chunks.get(key);
+  if (!c) return;
+  scene.remove(c.group);
+  c.group.traverse(o=>{ if(o.isMesh) o.geometry.dispose(); });
+  chunks.delete(key);
+}
+
+const FRAME_BUILD_BUDGET_MS = 5;
+const MAX_CHUNKS_PER_FRAME = 1;
+function processBuildQueue() {
+  const start = performance.now();
+  let built = 0;
+  while (buildQueue.length && built < MAX_CHUNKS_PER_FRAME && performance.now()-start < FRAME_BUILD_BUDGET_MS) {
+    const [cx,cy] = buildQueue.shift();
+    const key = chunkKey(cx,cy);
+    queuedSet.delete(key);
+    if (chunks.has(key)) continue;
+    commitChunk(cx,cy, buildChunkData(cx,cy));
+    built++;
+  }
+}
+function requestChunks(px,pz) {
+  const chunkX = Math.floor(px/(CELL_SIZE*MAZE_N));
+  const chunkY = Math.floor(pz/(CELL_SIZE*MAZE_N));
+  const needed = new Set();
+  for (let dx=-RENDER_RADIUS; dx<=RENDER_RADIUS; dx++) for (let dy=-RENDER_RADIUS; dy<=RENDER_RADIUS; dy++) {
+    const cx=chunkX+dx, cy=chunkY+dy, key=chunkKey(cx,cy);
+    needed.add(key);
+    if (!chunks.has(key) && !queuedSet.has(key)) { buildQueue.push([cx,cy]); queuedSet.add(key); }
+    else if (chunks.has(key)) chunks.get(key).lastUsed = performance.now();
+  }
+  for (const key of Array.from(chunks.keys())) if (!needed.has(key)) removeChunk(key);
+  if (chunks.size > MAX_CACHED_CHUNKS) {
+    const sorted = Array.from(chunks.entries()).sort((a,b)=>a[1].lastUsed-b[1].lastUsed);
+    while (chunks.size > MAX_CACHED_CHUNKS) removeChunk(sorted.shift()[0]);
+  }
+}
+
+let foundCount = 0;
+const foundSpan = document.getElementById('foundCount');
+
+// ================= COLLISION =================
+const PLAYER_RADIUS = 0.3;
+function resolveCollisions(pos) {
+  const chunkX = Math.floor(pos.x/(CELL_SIZE*MAZE_N));
+  const chunkY = Math.floor(pos.z/(CELL_SIZE*MAZE_N));
+  const nearbyBoxes = [];
+  for (let dx=-1; dx<=1; dx++) for (let dy=-1; dy<=1; dy++) {
+    const c = chunks.get(chunkKey(chunkX+dx, chunkY+dy));
+    if (!c) continue;
+    for (const box of c.colliders) nearbyBoxes.push(box);
+  }
+  for (let iter=0; iter<3; iter++) {
+    let anyCollision = false;
+    for (const box of nearbyBoxes) {
+      const closestX = Math.max(box.minX, Math.min(pos.x, box.maxX));
+      const closestZ = Math.max(box.minZ, Math.min(pos.z, box.maxZ));
+      const ddx = pos.x-closestX, ddz = pos.z-closestZ;
+      const distSq = ddx*ddx+ddz*ddz;
+      if (distSq < PLAYER_RADIUS*PLAYER_RADIUS) {
+        anyCollision = true;
+        const dist = Math.sqrt(distSq) || 0.0001;
+        const overlap = PLAYER_RADIUS - dist;
+        pos.x += (ddx/dist)*overlap;
+        pos.z += (ddz/dist)*overlap;
+      }
+    }
+    if (!anyCollision) break;
+  }
+}
+
+// ================= ENTITY: maze-aware pathfinding chaser =================
+const entity = new THREE.Mesh(entityGeo, entityMat);
+entity.visible = false;
+scene.add(entity);
+let entityActive = false;
+let entityPos = new THREE.Vector3();
+let entityGX = 0, entityGZ = 0;
+let entitySpawnTimer = 10 + Math.random()*8;
+let sanity = 100;
+const sanityFill = document.getElementById('sanityFill');
+const vignette = document.getElementById('vignette');
+const jumpscare = document.getElementById('jumpscare');
+
+function worldToCell(x,z) { return [Math.floor(x/CELL_SIZE), Math.floor(z/CELL_SIZE)]; }
+function cellCenter(gx,gz) { return [gx*CELL_SIZE+CELL_SIZE/2, gz*CELL_SIZE+CELL_SIZE/2]; }
+
+function bfsPath(startKey, goalKey, maxNodes=400) {
+  if (startKey===goalKey) return [];
+  const visited = new Set([startKey]);
+  const queue = [[startKey, []]];
+  let checked = 0;
+  while (queue.length && checked < maxNodes) {
+    checked++;
+    const [cur, path] = queue.shift();
+    const neighbors = graph.get(cur);
+    if (!neighbors) continue;
+    for (const n of neighbors) {
+      if (visited.has(n)) continue;
+      const newPath = path.concat([n]);
+      if (n===goalKey) return newPath;
+      visited.add(n);
+      queue.push([n, newPath]);
+    }
+  }
+  return null;
+}
+
+let currentPath = [];
+let pathTarget = null;
+let lastPathCompute = 0;
+
+function spawnEntity(playerPos) {
+  const [pgx,pgz] = worldToCell(playerPos.x, playerPos.z);
+  let placed = false, tries=0;
+  while (!placed && tries < 20) {
+    tries++;
+    const angle = Math.random()*Math.PI*2;
+    const dist = 6 + Math.random()*4;
+    const gx = pgx + Math.round(Math.cos(angle)*dist);
+    const gz = pgz + Math.round(Math.sin(angle)*dist);
+    if (graph.has(gKey(gx,gz))) {
+      entityGX = gx; entityGZ = gz;
+      const [wx,wz] = cellCenter(gx,gz);
+      entityPos.set(wx, 1.0, wz);
+      placed = true;
+    }
+  }
+  if (!placed) { const [wx,wz]=cellCenter(pgx+8,pgz+8); entityPos.set(wx,1.0,wz); entityGX=pgx+8; entityGZ=pgz+8; }
+  entity.position.copy(entityPos);
+  entity.visible = true;
+  entityActive = true;
+  currentPath = [];
+}
+
+function triggerJumpscare() {
+  gameOver = true;
+  controls.unlock();
+  jumpscare.style.display = 'flex';
+  jumpscare.style.background = '#1a0000';
+  jumpscare.innerHTML = '<h1 style="color:#ff3333;font-family:monospace;font-size:44px;">IT FOUND YOU</h1><p style="color:#c9b458;font-family:monospace;">Refresh to try again</p>';
+}
+
+let audioCtx, droneOsc, staticGain, staticFilter;
+function initAudio() {
+  audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+  droneOsc = audioCtx.createOscillator();
+  droneOsc.type='sine'; droneOsc.frequency.value=45;
+  const gain = audioCtx.createGain(); gain.gain.value=0.035;
+  droneOsc.connect(gain).connect(audioCtx.destination);
+  droneOsc.start();
+
+  // White-noise static buffer, looped, gain controlled by entity proximity
+  const bufferSize = audioCtx.sampleRate * 2;
+  const noiseBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+  const data = noiseBuffer.getChannelData(0);
+  for (let i=0;i<bufferSize;i++) data[i] = Math.random()*2-1;
+  const noiseSrc = audioCtx.createBufferSource();
+  noiseSrc.buffer = noiseBuffer; noiseSrc.loop = true;
+  staticFilter = audioCtx.createBiquadFilter();
+  staticFilter.type = 'bandpass'; staticFilter.frequency.value = 1800; staticFilter.Q.value = 0.6;
+  staticGain = audioCtx.createGain(); staticGain.gain.value = 0;
+  noiseSrc.connect(staticFilter).connect(staticGain).connect(audioCtx.destination);
+  noiseSrc.start();
+}
+controls.addEventListener('lock', () => { if(!audioCtx) initAudio(); });
+
+function heartbeatPulse(intensity) {
+  if (!audioCtx) return;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type='sine'; osc.frequency.value=58;
+  gain.gain.value = Math.min(0.2, 0.15*intensity);
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start();
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime+0.35);
+  osc.stop(audioCtx.currentTime+0.4);
+}
+let lastHeartbeat = 0;
+
+// ================= INIT =================
+requestChunks(0,0);
+processBuildQueue(); processBuildQueue(); processBuildQueue();
+loadOverlay.style.display = 'none';
+blocker.style.display = 'flex';
+
+// ================= MAIN LOOP =================
+const clock = new THREE.Clock();
+const cellSpan = document.getElementById('cellPos');
+const fpsSpan = document.getElementById('fps');
+const dir = new THREE.Vector3();
+let frameCount=0, fpsAccum=0;
+let smoothedDistort = 0;
+function applyDistortion(amt, t) {
+  if (amt > 0.015) {
+    renderer.domElement.style.filter =
+      'blur(' + (amt*2.5).toFixed(2) + 'px) saturate(' + (1+amt*0.7).toFixed(2) + ') contrast(' + (1+amt*0.25).toFixed(2) + ')';
+    const roll = Math.sin(t*7) * amt * 3;
+    renderer.domElement.style.transform = 'rotate(' + roll.toFixed(2) + 'deg)';
+  } else {
+    renderer.domElement.style.filter = 'none';
+    renderer.domElement.style.transform = 'none';
+  }
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  if (gameOver) { renderer.render(scene, camera); return; }
+  const delta = Math.min(clock.getDelta(), 0.05);
+  const t = performance.now()*0.001;
+
+  processBuildQueue();
+
+  const hueShift=(Math.sin(t*0.05)+1)*0.012;
+  const drifted = BASE_FOG.clone().offsetHSL(hueShift,0,Math.sin(t*0.07)*0.015);
+  scene.fog.color.copy(drifted);
+  scene.background.copy(drifted);
+  camera.fov = 74 + Math.sin(t*0.15)*0.8;
+  camera.updateProjectionMatrix();
+
+  if (controls.isLocked) {
+    const speed = (keys['ShiftLeft']||keys['ShiftRight']) ? SPRINT_SPEED : WALK_SPEED;
+    dir.set(0,0,0);
+    if (keys['KeyW']) dir.z -= 1;
+    if (keys['KeyS']) dir.z += 1;
+    if (keys['KeyA']) dir.x -= 1;
+    if (keys['KeyD']) dir.x += 1;
+    if (dir.lengthSq()>0) dir.normalize();
+
+    const forward = new THREE.Vector3();
+    camera.getWorldDirection(forward);
+    forward.y=0; forward.normalize();
+    const right = new THREE.Vector3().crossVectors(forward, camera.up).normalize();
+    const moveVec = new THREE.Vector3();
+    moveVec.addScaledVector(forward, -dir.z);
+    moveVec.addScaledVector(right, dir.x);
+    if (moveVec.lengthSq()>0) moveVec.normalize().multiplyScalar(speed*delta);
+
+    const obj = controls.getObject();
+    obj.position.x += moveVec.x;
+    obj.position.z += moveVec.z;
+    resolveCollisions(obj.position);
+
+    if (keys['Space'] && onGround) { velocityY = JUMP_SPEED; onGround=false; }
+    velocityY -= GRAVITY*delta;
+    obj.position.y += velocityY*delta;
+    if (obj.position.y <= EYE_HEIGHT) { obj.position.y = EYE_HEIGHT; velocityY=0; onGround=true; }
+
+    flicker.position.set(obj.position.x, obj.position.y+0.9, obj.position.z);
+    flicker.intensity = 1.0 + Math.sin(t*10)*0.1 + (Math.random()-0.5)*0.05;
+
+    // Hallway flickering lights (subset of bulbs), independent random flicker
+    for (const fl of flickerLights) {
+      if (Math.random() < 0.02) fl.intensity = 0.05;
+      else if (Math.random() < 0.1) fl.intensity = 0.7 + Math.random()*0.3;
+    }
+
+    // Flashlight rare flicker
+    if (flashOn) {
+      flashFlickerTimer -= delta;
+      if (flashFlickerTimer <= 0) {
+        flashlight.intensity = FLASHLIGHT_BASE_INTENSITY * 0.15;
+        setTimeout(()=>{ if(flashOn) flashlight.intensity = FLASHLIGHT_BASE_INTENSITY; }, 90+Math.random()*120);
+        flashFlickerTimer = 4 + Math.random()*7;
+      }
+    }
+
+    requestChunks(obj.position.x, obj.position.z);
+    cellSpan.textContent = Math.floor(obj.position.x/CELL_SIZE)+','+Math.floor(obj.position.z/CELL_SIZE);
+
+    for (const s of allSigns) {
+      if (s.found) continue;
+      const dxs = obj.position.x - s.worldX, dzs = obj.position.z - s.worldZ;
+      if (dxs*dxs+dzs*dzs < 2.2*2.2) {
+        s.found = true; foundCount++; foundSpan.textContent = foundCount;
+      }
+    }
+
+    entitySpawnTimer -= delta;
+    if (!entityActive && entitySpawnTimer <= 0) spawnEntity(obj.position);
+
+    if (entityActive) {
+      if (t - lastPathCompute > 0.5) {
+        lastPathCompute = t;
+        const [pgx,pgz] = worldToCell(obj.position.x, obj.position.z);
+        const startKey = gKey(entityGX, entityGZ);
+        const goalKey = gKey(pgx,pgz);
+        const path = bfsPath(startKey, goalKey, 500);
+        currentPath = path || [];
+      }
+      if (!pathTarget && currentPath.length) {
+        const [ngx,ngz] = currentPath[0].split(',').map(Number);
+        pathTarget = {gx:ngx, gz:ngz};
+      }
+      if (pathTarget) {
+        const [tx,tz] = cellCenter(pathTarget.gx, pathTarget.gz);
+        const ddx = tx-entityPos.x, ddz = tz-entityPos.z;
+        const dd = Math.sqrt(ddx*ddx+ddz*ddz);
+        const chaseSpeed = 2.4;
+        if (dd < 0.15) {
+          entityGX = pathTarget.gx; entityGZ = pathTarget.gz;
+          currentPath.shift();
+          pathTarget = null;
+        } else {
+          entityPos.x += (ddx/dd)*chaseSpeed*delta;
+          entityPos.z += (ddz/dd)*chaseSpeed*delta;
+        }
+      }
+      entity.position.set(entityPos.x, 1.0, entityPos.z);
+      entity.lookAt(obj.position.x, 1.0, obj.position.z);
+
+      const toPlayer = new THREE.Vector3(obj.position.x-entityPos.x, 0, obj.position.z-entityPos.z);
+      const distToPlayer = toPlayer.length();
+      const proximity = Math.max(0, 1 - distToPlayer/14);
+      sanity -= proximity*16*delta;
+      sanity = Math.max(0, sanity);
+      sanityFill.style.width = sanity+'%';
+      vignette.style.opacity = Math.min(0.85, (1-sanity/100)*0.9 + proximity*0.3);
+
+      if (distToPlayer < 13 && t-lastHeartbeat > Math.max(0.3, distToPlayer/11)) {
+        heartbeatPulse(proximity+0.3); lastHeartbeat = t;
+      }
+      if (distToPlayer < 1.0 || sanity<=0) triggerJumpscare();
+
+      if (staticGain) {
+        const targetGain = distToPlayer > 16 ? 0 : proximity*proximity*0.5;
+        staticGain.gain.value += (targetGain - staticGain.gain.value)*0.1;
+        staticFilter.frequency.value = 1200 + proximity*2500 + (Math.random()-0.5)*300;
+      }
+      const distortAmt = proximity*proximity;
+      smoothedDistort += (distortAmt - smoothedDistort) * 0.08;
+      applyDistortion(smoothedDistort, t);
+
+      if (distToPlayer > 45) {
+        entityActive = false; entity.visible = false;
+        entitySpawnTimer = 14 + Math.random()*12;
+        sanity = Math.min(100, sanity+10);
+        currentPath = []; pathTarget = null;
+      }
+    } else {
+      sanity = Math.min(100, sanity + 5*delta);
+      sanityFill.style.width = sanity+'%';
+      const cur = parseFloat(vignette.style.opacity)||0;
+      vignette.style.opacity = Math.max(0, cur-delta*0.3);
+      if (staticGain) staticGain.gain.value += (0 - staticGain.gain.value)*0.1;
+      smoothedDistort += (0 - smoothedDistort) * 0.08;
+      applyDistortion(smoothedDistort, t);
+    }
+  }
+
+  frameCount++; fpsAccum += delta;
+  if (fpsAccum >= 0.5) { fpsSpan.textContent = Math.round(frameCount/fpsAccum); frameCount=0; fpsAccum=0; }
+  renderer.render(scene, camera);
+}
+animate();
+</script>
+</body>
+</html>
