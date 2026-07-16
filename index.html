@@ -30,6 +30,7 @@
 </style>
 </head>
 <body>
+<canvas id="pixiOverlay" style="position:fixed;top:0;left:0;width:100%;height:100%;z-index:8;pointer-events:none;image-rendering:pixelated;"></canvas>
 <div id="loadOverlay">Initializing...</div>
 <div id="blocker" style="display:none">
   <div id="instructions">
@@ -47,6 +48,7 @@
 <div id="vignette"></div>
 <div id="jumpscare"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/pixi.js@8.6.6/dist/pixi.min.js"></script>
 <script type="importmap">
 {
   "imports": {
@@ -1157,6 +1159,87 @@ function updateAnomalies(delta, playerPos) {
   }
 }
 
+
+// --- PixiJS overlay layer: dust motes + insanity static glitch (independent canvas) ---
+let pixiApp = null;
+let dustContainer = null;
+let glitchContainer = null;
+const dustMotes = [];
+async function initPixiOverlay() {
+  try {
+    pixiApp = new PIXI.Application();
+    await pixiApp.init({
+      canvas: document.getElementById('pixiOverlay'),
+      width: window.innerWidth,
+      height: window.innerHeight,
+      backgroundAlpha: 0,
+      antialias: false,
+      resolution: 1
+    });
+    dustContainer = new PIXI.Container();
+    glitchContainer = new PIXI.Container();
+    pixiApp.stage.addChild(dustContainer);
+    pixiApp.stage.addChild(glitchContainer);
+
+    for (let i=0;i<60;i++) {
+      const g = new PIXI.Graphics();
+      g.circle(0,0, 1 + Math.random()*1.5).fill({color:0xc9b458, alpha:0.18+Math.random()*0.2});
+      g.x = Math.random()*window.innerWidth;
+      g.y = Math.random()*window.innerHeight;
+      dustContainer.addChild(g);
+      dustMotes.push({
+        sprite: g,
+        vx: (Math.random()-0.5)*6,
+        vy: 6 + Math.random()*10,
+        baseAlpha: g.alpha
+      });
+    }
+
+    window.addEventListener('resize', () => {
+      if (pixiApp && pixiApp.renderer) pixiApp.renderer.resize(window.innerWidth, window.innerHeight);
+    });
+  } catch (e) {
+    console.warn('Pixi overlay failed to init, continuing without it:', e);
+    pixiApp = null;
+  }
+}
+initPixiOverlay();
+
+let glitchBars = [];
+function spawnGlitchBar() {
+  if (!glitchContainer) return;
+  const bar = new PIXI.Graphics();
+  const h = 2 + Math.random()*6;
+  const y = Math.random()*window.innerHeight;
+  bar.rect(0, y, window.innerWidth, h).fill({color:0xff4a3b, alpha:0.12+Math.random()*0.15});
+  glitchContainer.addChild(bar);
+  glitchBars.push({sprite: bar, life: 0.08 + Math.random()*0.08, age: 0});
+}
+function updatePixiOverlay(delta) {
+  if (!pixiApp) return;
+  for (const m of dustMotes) {
+    m.sprite.y += m.vy * delta;
+    m.sprite.x += m.vx * delta * (insanityFactor*0.5+1);
+    if (m.sprite.y > window.innerHeight + 5) {
+      m.sprite.y = -5;
+      m.sprite.x = Math.random()*window.innerWidth;
+    }
+    m.sprite.alpha = m.baseAlpha * (1 + insanityFactor*0.6);
+  }
+  if (insanityFactor > 0.35 && Math.random() < insanityFactor*0.05) {
+    spawnGlitchBar();
+  }
+  for (let i=glitchBars.length-1;i>=0;i--) {
+    const b = glitchBars[i];
+    b.age += delta;
+    b.sprite.alpha = Math.max(0, 1 - b.age/b.life) * 0.2;
+    if (b.age >= b.life) {
+      glitchContainer.removeChild(b.sprite);
+      glitchBars.splice(i,1);
+    }
+  }
+}
+
 function animate() {
   requestAnimationFrame(animate);
   if (gameOver) { renderer.setRenderTarget(lowResTarget);
@@ -1376,6 +1459,7 @@ function animate() {
       updateAnomalies(delta, controls.getObject().position);
     }
   }
+  updatePixiOverlay(delta);
 
   frameCount++; fpsAccum += delta;
   if (fpsAccum >= 0.5) { fpsSpan.textContent = Math.round(frameCount/fpsAccum); frameCount=0; fpsAccum=0; }
