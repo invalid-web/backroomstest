@@ -12,8 +12,14 @@
   #crosshair{position:absolute;top:50%;left:50%;width:6px;height:6px;margin:-3px;
     background:rgba(255,255,255,0.7);border-radius:50%;z-index:5;pointer-events:none;}
   #hud{position:absolute;bottom:10px;left:10px;color:#c9b458;z-index:5;font-size:12px;opacity:0.7;}
-  #sanityBar{position:absolute;bottom:10px;right:10px;width:160px;height:10px;border:1px solid #c9b458;z-index:5;}
-  #sanityFill{background:#c9b458;height:100%;width:100%;transition:width 0.3s;}
+  #sanityBar{position:absolute;bottom:16px;right:16px;width:200px;z-index:5;
+    background:rgba(10,10,8,0.55);border:1px solid #6b6142;border-radius:6px;padding:8px 10px;
+    box-shadow:0 0 12px rgba(0,0,0,0.5);}
+  #sanityLabel{color:#c9b458;font-size:10px;letter-spacing:2px;margin-bottom:5px;opacity:0.85;}
+  #sanityTrack{width:100%;height:9px;background:#1a1710;border:1px solid #4a4330;border-radius:4px;overflow:hidden;}
+  #sanityFill{background:linear-gradient(90deg,#8a7a3f,#c9b458);height:100%;width:100%;
+    transition:width 0.3s, background 0.3s;box-shadow:0 0 6px rgba(201,180,88,0.5);}
+  #sanityPct{color:#c9b458;font-size:10px;text-align:right;margin-top:4px;opacity:0.7;}
   #vignette{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:4;
     box-shadow: inset 0 0 150px 60px rgba(0,0,0,0.8); opacity:0; transition:opacity 0.4s;}
   #jumpscare{position:absolute;top:0;left:0;width:100%;height:100%;background:#000;z-index:20;
@@ -37,7 +43,7 @@
 <div id="crosshair"></div>
 <div id="hud">Cell: <span id="cellPos">0,0</span> | FPS: <span id="fps">--</span></div>
 <div id="objective">Objective: find the 5 flickering exit signs.<br>Found: <span id="foundCount">0</span>/5</div>
-<div id="sanityBar"><div id="sanityFill"></div></div>
+<div id="sanityBar"><div id="sanityLabel">SANITY</div><div id="sanityTrack"><div id="sanityFill"></div></div><div id="sanityPct">100%</div></div>
 <div id="vignette"></div>
 <div id="jumpscare"></div>
 
@@ -78,7 +84,7 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-const ambient = new THREE.AmbientLight(0xfff2c0, 0.3);
+const ambient = new THREE.AmbientLight(0xfff2c0, 0.14);
 scene.add(ambient);
 const flicker = new THREE.PointLight(0xfff2c0, 1.0, 9, 2);
 scene.add(flicker);
@@ -123,6 +129,27 @@ document.addEventListener('keydown', e => {
   if (e.code === 'KeyF') { flashMode = (flashMode+1) % FLASHLIGHT_MODES.length; applyFlashMode(); }
 });
 document.addEventListener('keyup', e => keys[e.code] = false);
+
+const doorRaycaster = new THREE.Raycaster();
+document.addEventListener('contextmenu', e => e.preventDefault());
+document.addEventListener('mousedown', e => {
+  if (e.button !== 2 || !controls.isLocked) return;
+  doorRaycaster.setFromCamera(new THREE.Vector2(0,0), camera);
+  let closestDoor = null, closestDist = 3.2;
+  for (const d of allDoors) {
+    const dx = d.worldX - camera.position.x, dz = d.worldZ - camera.position.z;
+    const dist = Math.sqrt(dx*dx+dz*dz);
+    if (dist < closestDist) {
+      const toDoor = new THREE.Vector3(dx,0,dz).normalize();
+      const fwd = new THREE.Vector3(); camera.getWorldDirection(fwd); fwd.y=0; fwd.normalize();
+      if (toDoor.dot(fwd) > 0.55) { closestDoor = d; closestDist = dist; }
+    }
+  }
+  if (closestDoor) {
+    closestDoor.isOpen = !closestDoor.isOpen;
+    playDoorSound(closestDoor.isOpen);
+  }
+});
 
 let velocityY = 0, onGround = true, gameOver = false;
 const GRAVITY = 22, JUMP_SPEED = 7.0, WALK_SPEED = 3.6, SPRINT_SPEED = 6.2, EYE_HEIGHT = 1.7;
@@ -240,6 +267,33 @@ function chunkKey(cx,cy){ return cx+','+cy; }
 
 const doorFrameMat = new THREE.MeshStandardMaterial({color:0x4a4030, roughness:0.7});
 const doorPanelMat = new THREE.MeshStandardMaterial({color:0x5c3b2a, roughness:0.6});
+const whiteDoorFrameMat = new THREE.MeshStandardMaterial({color:0xf2f0e8, roughness:0.5});
+const whiteDoorPanelMat = new THREE.MeshStandardMaterial({color:0xfafaf5, roughness:0.4});
+const allDoors = [];
+
+function buildWallDoor() {
+  const frameThick = 0.08, doorW = 0.9, doorH = 2.1;
+  const doorGroup = new THREE.Group();
+  const topBeam = new THREE.Mesh(new THREE.BoxGeometry(doorW+frameThick*2, frameThick, 0.14), whiteDoorFrameMat);
+  topBeam.position.set(0, doorH+frameThick/2, 0);
+  const leftBeam = new THREE.Mesh(new THREE.BoxGeometry(frameThick, doorH, 0.14), whiteDoorFrameMat);
+  leftBeam.position.set(-doorW/2-frameThick/2, doorH/2, 0);
+  const rightBeam = new THREE.Mesh(new THREE.BoxGeometry(frameThick, doorH, 0.14), whiteDoorFrameMat);
+  rightBeam.position.set(doorW/2+frameThick/2, doorH/2, 0);
+  doorGroup.add(topBeam, leftBeam, rightBeam);
+
+  const pivot = new THREE.Group();
+  pivot.position.set(-doorW/2, 0, 0);
+  const panel = new THREE.Mesh(new THREE.BoxGeometry(doorW, doorH, 0.06), whiteDoorPanelMat);
+  panel.position.set(doorW/2, doorH/2, 0);
+  const knob = new THREE.Mesh(new THREE.SphereGeometry(0.04,8,8), doorFrameMat);
+  knob.position.set(doorW-0.1, doorH/2, 0.05);
+  panel.add(knob);
+  pivot.add(panel);
+  doorGroup.add(pivot);
+
+  return {group: doorGroup, pivot, doorW};
+}
 function buildDoorFrame() {
   const g = new THREE.Group();
   const postGeo = new THREE.BoxGeometry(0.15, 2.2, 0.15);
@@ -309,6 +363,83 @@ function buildEscherRoom(cx, cz, size) {
     step.rotation.x = 0.35;
     g.add(step);
   }
+  return g;
+}
+
+const chairMat = new THREE.MeshStandardMaterial({color:0xf0ede0, roughness:0.6});
+function buildKitchenChair() {
+  const g = new THREE.Group();
+  const seat = new THREE.Mesh(new THREE.BoxGeometry(0.42,0.05,0.42), chairMat);
+  seat.position.y = 0.45;
+  const back = new THREE.Mesh(new THREE.BoxGeometry(0.42,0.5,0.05), chairMat);
+  back.position.set(0,0.7,-0.19);
+  g.add(seat, back);
+  const legPositions = [[-0.18,-0.18],[0.18,-0.18],[-0.18,0.18],[0.18,0.18]];
+  for (const [lx,lz] of legPositions) {
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.04,0.45,0.04), chairMat);
+    leg.position.set(lx,0.225,lz);
+    g.add(leg);
+  }
+  return g;
+}
+function buildChairPile(cx, cz, colliders) {
+  const g = new THREE.Group();
+  const count = 3 + Math.floor(Math.random()*3);
+  for (let i=0;i<count;i++) {
+    const chair = buildKitchenChair();
+    const ox = (Math.random()-0.5)*0.6, oz = (Math.random()-0.5)*0.6;
+    chair.position.set(cx+ox, i*0.12, cz+oz);
+    chair.rotation.set((Math.random()-0.5)*0.6 + (i*0.4), Math.random()*Math.PI*2, (Math.random()-0.5)*0.6);
+    g.add(chair);
+  }
+  colliders.push({minX:cx-0.5,maxX:cx+0.5,minZ:cz-0.5,maxZ:cz+0.5});
+  return g;
+}
+
+const anomalyMat = {
+  clockFace: new THREE.MeshStandardMaterial({color:0xe8e4d8, roughness:0.5}),
+  clockFrame: new THREE.MeshStandardMaterial({color:0x2a2a2a, roughness:0.5}),
+  mannequin: new THREE.MeshStandardMaterial({color:0xd8cfc0, roughness:0.4}),
+  cart: new THREE.MeshStandardMaterial({color:0x888888, metalness:0.7, roughness:0.3})
+};
+function buildWallClock() {
+  const g = new THREE.Group();
+  const face = new THREE.Mesh(new THREE.CylinderGeometry(0.3,0.3,0.06,24), anomalyMat.clockFace);
+  face.rotation.x = Math.PI/2;
+  const frame = new THREE.Mesh(new THREE.TorusGeometry(0.3,0.03,8,24), anomalyMat.clockFrame);
+  const hourHand = new THREE.Mesh(new THREE.BoxGeometry(0.03,0.15,0.02), anomalyMat.clockFrame);
+  hourHand.position.set(0,0.06,0.04);
+  const minHand = new THREE.Mesh(new THREE.BoxGeometry(0.02,0.22,0.02), anomalyMat.clockFrame);
+  minHand.position.set(0,0.09,0.05);
+  g.add(face, frame, hourHand, minHand);
+  return g;
+}
+function buildMannequin(colliders, cx, cz) {
+  const g = new THREE.Group();
+  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.22,0.6,4,8), anomalyMat.mannequin);
+  torso.position.y = 1.0;
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.16,12,12), anomalyMat.mannequin);
+  head.position.y = 1.55;
+  const legs = new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.1,0.9,8), anomalyMat.mannequin);
+  legs.position.y = 0.45;
+  g.add(torso, head, legs);
+  colliders.push({minX:cx-0.3,maxX:cx+0.3,minZ:cz-0.3,maxZ:cz+0.3});
+  return g;
+}
+function buildAbandonedCart(colliders, cx, cz) {
+  const g = new THREE.Group();
+  const basket = new THREE.Mesh(new THREE.BoxGeometry(0.6,0.5,0.9), anomalyMat.cart);
+  basket.position.y = 0.55;
+  g.add(basket);
+  const wheelGeo = new THREE.CylinderGeometry(0.08,0.08,0.06,10);
+  const wheelPos = [[-0.25,-0.4],[0.25,-0.4],[-0.25,0.4],[0.25,0.4]];
+  for (const [wx,wz] of wheelPos) {
+    const wheel = new THREE.Mesh(wheelGeo, anomalyMat.cart);
+    wheel.rotation.z = Math.PI/2;
+    wheel.position.set(wx,0.08,wz);
+    g.add(wheel);
+  }
+  colliders.push({minX:cx-0.35,maxX:cx+0.35,minZ:cz-0.5,maxZ:cz+0.5});
   return g;
 }
 
@@ -386,6 +517,7 @@ const SPECIAL_ROOM_BUILDERS = [buildUpsideRoom, buildEscherRoom, buildChessRoom,
 
 function buildChunkData(chunkX, chunkY) {
   const chunkFlickerLights = [];
+  const chunkDoors = [];
   const N = MAZE_N;
   const cellWalls = generateMazeCells(chunkX, chunkY);
   const idx = (x,y)=>y*N+x;
@@ -505,10 +637,49 @@ function buildChunkData(chunkX, chunkY) {
   for (let x=0;x<N;x++) for (let y=0;y<N;y++) {
     const wx=(baseGX+x)*CELL_SIZE, wz=(baseGY+y)*CELL_SIZE, ccx=wx+halfCS, ccz=wz+halfCS;
     if (hash2(baseGX+x,baseGY+y,11) < 0.06) {
-      const bulb = new THREE.PointLight(0xfff6c8, 0.7, 6.5, 2);
+      const bulb = new THREE.PointLight(0xfff6c8, 0.45, 5.5, 2);
       bulb.position.set(ccx, CEIL_Y-0.15, ccz);
       group.add(bulb);
       if (hash2(baseGX+x,baseGY+y,88) < 0.35) chunkFlickerLights.push(bulb);
+    }
+    if (hash2(baseGX+x,baseGY+y,444) < 0.02) group.add(buildChairPile(ccx, ccz, colliders));
+    if (hash2(baseGX+x,baseGY+y,555) < 0.012) {
+      const clock = buildWallClock();
+      const w2 = cellWalls[idx(x,y)];
+      if (!w2.N) clock.position.set(ccx, 1.9, wz+0.08);
+      else if (!w2.S) { clock.position.set(ccx, 1.9, wz+CELL_SIZE-0.08); clock.rotation.y = Math.PI; }
+      else if (!w2.E) { clock.position.set(wx+CELL_SIZE-0.08, 1.9, ccz); clock.rotation.y = -Math.PI/2; }
+      else { clock.position.set(wx+0.08, 1.9, ccz); clock.rotation.y = Math.PI/2; }
+      group.add(clock);
+    }
+    if (hash2(baseGX+x,baseGY+y,666) < 0.008) group.add(buildMannequin(colliders, ccx, ccz));
+    if (hash2(baseGX+x,baseGY+y,777) < 0.007) group.add(buildAbandonedCart(colliders, ccx, ccz));
+    if (hash2(baseGX+x,baseGY+y,888) < 0.012) {
+      const w3 = cellWalls[idx(x,y)];
+      let placedWall = w3.N ? 'N' : w3.S ? 'S' : w3.E ? 'E' : w3.W ? 'W' : null;
+      if (placedWall) {
+        const doorObj = buildWallDoor();
+        const doorW = doorObj.doorW;
+        let doorCX, doorCZ, doorRotY, colliderBox;
+        if (placedWall === 'N') {
+          doorCX = ccx; doorCZ = wz; doorRotY = 0;
+          colliderBox = {minX: ccx-doorW/2, maxX: ccx+doorW/2, minZ: wz-0.1, maxZ: wz+0.1};
+        } else if (placedWall === 'S') {
+          doorCX = ccx; doorCZ = wz+CELL_SIZE; doorRotY = Math.PI;
+          colliderBox = {minX: ccx-doorW/2, maxX: ccx+doorW/2, minZ: wz+CELL_SIZE-0.1, maxZ: wz+CELL_SIZE+0.1};
+        } else if (placedWall === 'E') {
+          doorCX = wx+CELL_SIZE; doorCZ = ccz; doorRotY = -Math.PI/2;
+          colliderBox = {minX: wx+CELL_SIZE-0.1, maxX: wx+CELL_SIZE+0.1, minZ: ccz-doorW/2, maxZ: ccz+doorW/2};
+        } else {
+          doorCX = wx; doorCZ = ccz; doorRotY = Math.PI/2;
+          colliderBox = {minX: wx-0.1, maxX: wx+0.1, minZ: ccz-doorW/2, maxZ: ccz+doorW/2};
+        }
+        doorObj.group.position.set(doorCX, 0, doorCZ);
+        doorObj.group.rotation.y = doorRotY;
+        group.add(doorObj.group);
+        colliders.push(colliderBox);
+        chunkDoors.push({pivot: doorObj.pivot, isOpen:false, currentAngle:0, collider:colliderBox, worldX:doorCX, worldZ:doorCZ});
+      }
     }
     // Liminal doorframes in weird random spots (standalone, not blocking passage)
     if (hash2(baseGX+x,baseGY+y,222) < 0.01) {
@@ -550,13 +721,14 @@ function buildChunkData(chunkX, chunkY) {
     }
   }
 
-  return {group, colliders, signs, flickerLights: chunkFlickerLights};
+  return {group, colliders, signs, flickerLights: chunkFlickerLights, doors: chunkDoors};
 }
 
 function commitChunk(chunkX, chunkY, data) {
   scene.add(data.group);
   chunks.set(chunkKey(chunkX,chunkY), {...data, lastUsed: performance.now()});
   for (const s of data.signs) allSigns.push(s);
+  for (const d of data.doors) allDoors.push(d);
 }
 function pruneSignsForChunk(chunkX, chunkY) {
   const baseGX = chunkX*MAZE_N*CELL_SIZE, baseGY = chunkY*MAZE_N*CELL_SIZE;
@@ -589,6 +761,14 @@ function removeChunk(key) {
     }
   }
   pruneSignsForChunk(ccx, ccy);
+  const doorBaseGX = ccx*MAZE_N*CELL_SIZE, doorBaseGY = ccy*MAZE_N*CELL_SIZE;
+  const doorSize = MAZE_N*CELL_SIZE;
+  for (let i=allDoors.length-1;i>=0;i--) {
+    const d = allDoors[i];
+    if (d.worldX >= doorBaseGX && d.worldX < doorBaseGX+doorSize && d.worldZ >= doorBaseGY && d.worldZ < doorBaseGY+doorSize) {
+      allDoors.splice(i,1);
+    }
+  }
 }
 
 const FRAME_BUILD_BUDGET_MS = 5;
@@ -665,6 +845,14 @@ let entityGX = 0, entityGZ = 0;
 let entitySpawnTimer = 10 + Math.random()*8;
 let sanity = 100;
 const sanityFill = document.getElementById('sanityFill');
+const sanityPct = document.getElementById('sanityPct');
+function updateSanityUI(val) {
+  sanityFill.style.width = val + '%';
+  sanityPct.textContent = Math.round(val) + '%';
+  if (val < 25) sanityFill.style.background = 'linear-gradient(90deg,#7a1f1f,#c94040)';
+  else if (val < 55) sanityFill.style.background = 'linear-gradient(90deg,#8a5a1f,#c98a40)';
+  else sanityFill.style.background = 'linear-gradient(90deg,#8a7a3f,#c9b458)';
+}
 const vignette = document.getElementById('vignette');
 const jumpscare = document.getElementById('jumpscare');
 
@@ -753,6 +941,28 @@ controls.addEventListener('lock', () => { if(!audioCtx) initAudio(); });
 
 let bobPhase = 0;
 let footstepTimer = 0;
+function playDoorSound(opening) {
+  if (!audioCtx) return;
+  const bufferSize = audioCtx.sampleRate * 0.35;
+  const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i=0;i<bufferSize;i++) {
+    const p = i/bufferSize;
+    const envelope = opening ? Math.sin(p*Math.PI) : Math.sin(p*Math.PI)*0.8;
+    data[i] = (Math.random()*2-1) * envelope * 0.6;
+  }
+  const src = audioCtx.createBufferSource();
+  src.buffer = buffer;
+  const filter = audioCtx.createBiquadFilter();
+  filter.type = 'bandpass';
+  filter.frequency.value = opening ? 350 : 220;
+  filter.Q.value = 1.2;
+  const gain = audioCtx.createGain();
+  gain.gain.value = 0.35;
+  src.connect(filter).connect(gain).connect(audioCtx.destination);
+  src.start();
+}
+
 function playFootstep(sprinting) {
   if (!audioCtx) return;
   const bufferSize = audioCtx.sampleRate * 0.12;
@@ -840,6 +1050,26 @@ function animate() {
   const t = performance.now()*0.001;
 
   processBuildQueue();
+
+  for (const d of allDoors) {
+    d.targetAngle = d.isOpen ? -Math.PI/2 * 0.92 : 0;
+    d.currentAngle += (d.targetAngle - d.currentAngle) * Math.min(1, delta*6);
+    d.pivot.rotation.y = d.currentAngle;
+    const openEnough = Math.abs(d.currentAngle) > 0.6;
+    if (openEnough && !d.colliderDisabled) {
+      const i = d.collider ? undefined : undefined;
+    }
+    if (openEnough && d.collider && !d.collider.__disabled) {
+      d.collider.__savedMinX = d.collider.minX; d.collider.__savedMaxX = d.collider.maxX;
+      d.collider.__savedMinZ = d.collider.minZ; d.collider.__savedMaxZ = d.collider.maxZ;
+      d.collider.minX = d.collider.maxX = d.collider.minZ = d.collider.maxZ = -99999;
+      d.collider.__disabled = true;
+    } else if (!openEnough && d.collider && d.collider.__disabled) {
+      d.collider.minX = d.collider.__savedMinX; d.collider.maxX = d.collider.__savedMaxX;
+      d.collider.minZ = d.collider.__savedMinZ; d.collider.maxZ = d.collider.__savedMaxZ;
+      d.collider.__disabled = false;
+    }
+  }
 
   const hueShift=(Math.sin(t*0.05)+1)*0.012;
   const drifted = BASE_FOG.clone().offsetHSL(hueShift,0,Math.sin(t*0.07)*0.015);
@@ -977,7 +1207,7 @@ function animate() {
       const proximity = Math.max(0, 1 - distToPlayer/14);
       sanity -= proximity*16*delta;
       sanity = Math.max(0, sanity);
-      sanityFill.style.width = sanity+'%';
+      updateSanityUI(sanity);
       vignette.style.opacity = Math.min(0.85, (1-sanity/100)*0.9 + proximity*0.3);
 
       if (distToPlayer < 13 && t-lastHeartbeat > Math.max(0.3, distToPlayer/11)) {
@@ -1002,7 +1232,7 @@ function animate() {
       }
     } else {
       sanity = Math.min(100, sanity + 5*delta);
-      sanityFill.style.width = sanity+'%';
+      updateSanityUI(sanity);
       const cur = parseFloat(vignette.style.opacity)||0;
       vignette.style.opacity = Math.max(0, cur-delta*0.3);
       if (staticGain) staticGain.gain.value += (0 - staticGain.gain.value)*0.1;
