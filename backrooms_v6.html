@@ -834,6 +834,7 @@ function resolveCollisions(pos) {
     if (!c) continue;
     for (const box of c.colliders) nearbyBoxes.push(box);
   }
+  const radiusSq = PLAYER_RADIUS*PLAYER_RADIUS;
   for (let iter=0; iter<3; iter++) {
     let anyCollision = false;
     for (const box of nearbyBoxes) {
@@ -841,12 +842,13 @@ function resolveCollisions(pos) {
       const closestZ = Math.max(box.minZ, Math.min(pos.z, box.maxZ));
       const ddx = pos.x-closestX, ddz = pos.z-closestZ;
       const distSq = ddx*ddx+ddz*ddz;
-      if (distSq < PLAYER_RADIUS*PLAYER_RADIUS) {
+      if (distSq < radiusSq && distSq > 1e-6) {
         anyCollision = true;
-        const dist = Math.sqrt(distSq) || 0.0001;
+        const dist = Math.sqrt(distSq);
         const overlap = PLAYER_RADIUS - dist;
-        pos.x += (ddx/dist)*overlap;
-        pos.z += (ddz/dist)*overlap;
+        const nx = ddx/dist, nz = ddz/dist;
+        pos.x += nx*overlap;
+        pos.z += nz*overlap;
       }
     }
     if (!anyCollision) break;
@@ -1126,7 +1128,11 @@ function animate() {
     if (keys['Space'] && onGround) { velocityY = JUMP_SPEED; onGround=false; }
     velocityY -= GRAVITY*delta;
     obj.position.y += velocityY*delta;
-    if (obj.position.y <= EYE_HEIGHT) { obj.position.y = EYE_HEIGHT; velocityY=0; onGround=true; }
+    if (obj.position.y <= EYE_HEIGHT) {
+      obj.position.y = EYE_HEIGHT;
+      velocityY = 0;
+      onGround = true;
+    }
 
     // Natural flashlight + camera bob while walking on ground
     const isSprinting = keys['ShiftLeft'] || keys['ShiftRight'];
