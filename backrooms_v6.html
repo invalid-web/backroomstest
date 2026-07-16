@@ -88,9 +88,23 @@ camera.add(flashlight);
 flashlight.target.position.set(0,0,-1);
 camera.add(flashlight.target);
 scene.add(camera);
-let flashOn = false;
-const FLASHLIGHT_BASE_INTENSITY = 3.4;
+// Flashlight modes cycle: 0 = off, 1 = dim wide, 2 = narrow bright, 3 = wide bright
+const FLASHLIGHT_MODES = [
+  {intensity: 0,   angle: Math.PI/6,  penumbra: 0.4},
+  {intensity: 1.6, angle: Math.PI/5,  penumbra: 0.5},
+  {intensity: 4.5, angle: Math.PI/9,  penumbra: 0.25},
+  {intensity: 3.2, angle: Math.PI/4.2,penumbra: 0.45}
+];
+let flashMode = 0;
+let FLASHLIGHT_BASE_INTENSITY = 0;
 let flashFlickerTimer = 3 + Math.random()*6;
+function applyFlashMode() {
+  const m = FLASHLIGHT_MODES[flashMode];
+  flashlight.intensity = m.intensity;
+  flashlight.angle = m.angle;
+  flashlight.penumbra = m.penumbra;
+  FLASHLIGHT_BASE_INTENSITY = m.intensity;
+}
 
 // ================= CONTROLS =================
 const controls = new PointerLockControls(camera, document.body);
@@ -105,7 +119,7 @@ scene.add(controls.getObject());
 const keys = {};
 document.addEventListener('keydown', e => {
   keys[e.code] = true;
-  if (e.code === 'KeyF') { flashOn = !flashOn; flashlight.intensity = flashOn ? FLASHLIGHT_BASE_INTENSITY : 0; }
+  if (e.code === 'KeyF') { flashMode = (flashMode+1) % FLASHLIGHT_MODES.length; applyFlashMode(); }
 });
 document.addEventListener('keyup', e => keys[e.code] = false);
 
@@ -223,8 +237,6 @@ const queuedSet = new Set();
 const allSigns = [];
 function chunkKey(cx,cy){ return cx+','+cy; }
 
-const flickerLights = [];
-
 const doorFrameMat = new THREE.MeshStandardMaterial({color:0x4a4030, roughness:0.7});
 const doorPanelMat = new THREE.MeshStandardMaterial({color:0x5c3b2a, roughness:0.6});
 function buildDoorFrame() {
@@ -257,7 +269,80 @@ function buildStairway() {
   return g;
 }
 
+const specialRoomMats = {
+  ceilFurn: new THREE.MeshStandardMaterial({color:0x5c4a35, roughness:0.7}),
+  escherStep: new THREE.MeshStandardMaterial({color:0x9c8d5f, roughness:0.6}),
+  poolWater: new THREE.MeshStandardMaterial({color:0x1a3a4a, roughness:0.05, metalness:0.6, transparent:true, opacity:0.85}),
+  deskWood: new THREE.MeshStandardMaterial({color:0x6b4a2f, roughness:0.7}),
+  chalkboard: new THREE.MeshStandardMaterial({color:0x0d2b1a, roughness:0.8})
+};
+
+function buildUpsideRoom(cx, cz, size) {
+  const g = new THREE.Group();
+  const half = size/2;
+  for (let i=0;i<5;i++) {
+    const fx = (Math.random()-0.5)*size*0.7, fz = (Math.random()-0.5)*size*0.7;
+    const chair = new THREE.Mesh(new THREE.BoxGeometry(0.5,0.5,0.5), specialRoomMats.ceilFurn);
+    chair.position.set(cx+fx, CEIL_Y-0.3, cz+fz);
+    chair.rotation.z = Math.PI;
+    g.add(chair);
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.06,0.4,0.06), specialRoomMats.ceilFurn);
+    leg.position.set(cx+fx, CEIL_Y-0.65, cz+fz);
+    g.add(leg);
+  }
+  const table = new THREE.Mesh(new THREE.BoxGeometry(1.2,0.1,0.8), specialRoomMats.ceilFurn);
+  table.position.set(cx, CEIL_Y-0.15, cz);
+  g.add(table);
+  return g;
+}
+
+function buildEscherRoom(cx, cz, size) {
+  const g = new THREE.Group();
+  const stepGeo = new THREE.BoxGeometry(1.0,0.2,1.0);
+  const count = 12;
+  for (let i=0;i<count;i++) {
+    const step = new THREE.Mesh(stepGeo, specialRoomMats.escherStep);
+    const angle = (i/count)*Math.PI*2;
+    const r = size*0.32;
+    step.position.set(cx+Math.cos(angle)*r, 0.3+ (i%4)*0.5, cz+Math.sin(angle)*r);
+    step.rotation.y = angle;
+    step.rotation.x = 0.35;
+    g.add(step);
+  }
+  return g;
+}
+
+function buildPoolRoom(cx, cz, size) {
+  const g = new THREE.Group();
+  const pool = new THREE.Mesh(new THREE.PlaneGeometry(size*0.75, size*0.75), specialRoomMats.poolWater);
+  pool.rotation.x = -Math.PI/2;
+  pool.position.set(cx, 0.08, cz);
+  g.add(pool);
+  const rim = new THREE.Mesh(new THREE.BoxGeometry(size*0.8,0.15,size*0.8), specialRoomMats.escherStep);
+  rim.position.set(cx, 0.02, cz);
+  g.add(rim);
+  return g;
+}
+
+function buildClassroomRoom(cx, cz, size) {
+  const g = new THREE.Group();
+  for (let row=0; row<3; row++) {
+    for (let col=0; col<3; col++) {
+      const desk = new THREE.Mesh(new THREE.BoxGeometry(0.7,0.5,0.45), specialRoomMats.deskWood);
+      desk.position.set(cx + (col-1)*1.0, 0.25, cz + (row-1)*1.0);
+      g.add(desk);
+    }
+  }
+  const board = new THREE.Mesh(new THREE.PlaneGeometry(size*0.6,1.2), specialRoomMats.chalkboard);
+  board.position.set(cx, 1.4, cz - size*0.45);
+  g.add(board);
+  return g;
+}
+
+const SPECIAL_ROOM_BUILDERS = [buildUpsideRoom, buildEscherRoom, buildPoolRoom, buildClassroomRoom];
+
 function buildChunkData(chunkX, chunkY) {
+  const chunkFlickerLights = [];
   const N = MAZE_N;
   const cellWalls = generateMazeCells(chunkX, chunkY);
   const idx = (x,y)=>y*N+x;
@@ -282,6 +367,25 @@ function buildChunkData(chunkX, chunkY) {
   cellWalls[idx(0,connWfromNeighbor)].W = false;
   const connNfromNeighbor = getConnectorIndex(chunkX,chunkY-1,'S');
   cellWalls[idx(connNfromNeighbor,0)].N = false;
+
+  // Carve a rare special liminal room: merge a 2x2 cell block into one open room
+  let specialRoom = null;
+  if (hash2(chunkX, chunkY, 999) < 0.4) {
+    const rx = 1 + Math.floor(hash2(chunkX,chunkY,1000)*(N-3));
+    const ry = 1 + Math.floor(hash2(chunkX,chunkY,1001)*(N-3));
+    cellWalls[idx(rx,ry)].E = false; cellWalls[idx(rx+1,ry)].W = false;
+    cellWalls[idx(rx,ry)].S = false; cellWalls[idx(rx,ry+1)].N = false;
+    cellWalls[idx(rx+1,ry)].S = false; cellWalls[idx(rx+1,ry+1)].N = false;
+    cellWalls[idx(rx,ry+1)].E = false; cellWalls[idx(rx+1,ry+1)].W = false;
+    addEdge(baseGX+rx,baseGY+ry, baseGX+rx+1,baseGY+ry);
+    addEdge(baseGX+rx,baseGY+ry, baseGX+rx,baseGY+ry+1);
+    addEdge(baseGX+rx+1,baseGY+ry, baseGX+rx+1,baseGY+ry+1);
+    addEdge(baseGX+rx,baseGY+ry+1, baseGX+rx+1,baseGY+ry+1);
+    const roomCenterX = (baseGX+rx+1)*CELL_SIZE;
+    const roomCenterZ = (baseGY+ry+1)*CELL_SIZE;
+    const builderIdx = Math.floor(hash2(chunkX,chunkY,1002)*SPECIAL_ROOM_BUILDERS.length);
+    specialRoom = {builder: SPECIAL_ROOM_BUILDERS[builderIdx], cx: roomCenterX, cz: roomCenterZ, size: CELL_SIZE*2};
+  }
 
   const floorGeos=[], ceilGeos=[], wallGeos=[];
   const colliders = [];
@@ -355,7 +459,7 @@ function buildChunkData(chunkX, chunkY) {
       const bulb = new THREE.PointLight(0xfff6c8, 0.7, 6.5, 2);
       bulb.position.set(ccx, CEIL_Y-0.15, ccz);
       group.add(bulb);
-      if (hash2(baseGX+x,baseGY+y,88) < 0.35) flickerLights.push(bulb);
+      if (hash2(baseGX+x,baseGY+y,88) < 0.35) chunkFlickerLights.push(bulb);
     }
     // Liminal doorframes in weird random spots (standalone, not blocking passage)
     if (hash2(baseGX+x,baseGY+y,222) < 0.01) {
@@ -383,11 +487,21 @@ function buildChunkData(chunkX, chunkY) {
       const glow = new THREE.PointLight(0xff2222, 0.9, 3.5, 2);
       glow.position.copy(sign.position);
       group.add(glow);
-      signs.push({mesh:sign, worldX:ccx, worldZ:ccz, found:false});
+      signs.push({mesh:sign, glow:glow, worldX:ccx, worldZ:ccz, found:false});
     }
   }
 
-  return {group, colliders, signs};
+  if (specialRoom) {
+    const roomMesh = specialRoom.builder(specialRoom.cx, specialRoom.cz, specialRoom.size);
+    group.add(roomMesh);
+    if (specialRoom.builder === buildEscherRoom || specialRoom.builder === buildPoolRoom) {
+      const roomLight = new THREE.PointLight(0xbfd8ff, 0.9, specialRoom.size*1.5, 2);
+      roomLight.position.set(specialRoom.cx, CEIL_Y-0.3, specialRoom.cz);
+      group.add(roomLight);
+    }
+  }
+
+  return {group, colliders, signs, flickerLights: chunkFlickerLights};
 }
 
 function commitChunk(chunkX, chunkY, data) {
@@ -395,12 +509,37 @@ function commitChunk(chunkX, chunkY, data) {
   chunks.set(chunkKey(chunkX,chunkY), {...data, lastUsed: performance.now()});
   for (const s of data.signs) allSigns.push(s);
 }
+function pruneSignsForChunk(chunkX, chunkY) {
+  const baseGX = chunkX*MAZE_N*CELL_SIZE, baseGY = chunkY*MAZE_N*CELL_SIZE;
+  const size = MAZE_N*CELL_SIZE;
+  for (let i=allSigns.length-1;i>=0;i--) {
+    const s = allSigns[i];
+    if (s.worldX >= baseGX && s.worldX < baseGX+size && s.worldZ >= baseGY && s.worldZ < baseGY+size) {
+      allSigns.splice(i,1);
+    }
+  }
+}
 function removeChunk(key) {
   const c = chunks.get(key);
   if (!c) return;
   scene.remove(c.group);
   c.group.traverse(o=>{ if(o.isMesh) o.geometry.dispose(); });
   chunks.delete(key);
+  const [ccx, ccy] = key.split(',').map(Number);
+  const baseGX = ccx*MAZE_N, baseGY = ccy*MAZE_N;
+  for (let x=0;x<MAZE_N;x++) for (let y=0;y<MAZE_N;y++) {
+    const gx = baseGX+x, gy = baseGY+y;
+    const k = gKey(gx,gy);
+    const neighbors = graph.get(k);
+    if (neighbors) {
+      for (const n of neighbors) {
+        const nSet = graph.get(n);
+        if (nSet) nSet.delete(k);
+      }
+      graph.delete(k);
+    }
+  }
+  pruneSignsForChunk(ccx, ccy);
 }
 
 const FRAME_BUILD_BUDGET_MS = 5;
@@ -563,6 +702,23 @@ function initAudio() {
 }
 controls.addEventListener('lock', () => { if(!audioCtx) initAudio(); });
 
+function playChime() {
+  if (!audioCtx) return;
+  const notes = [880, 1174.66, 1567.98];
+  notes.forEach((freq, i) => {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'sine'; osc.frequency.value = freq;
+    gain.gain.value = 0.0001;
+    osc.connect(gain).connect(audioCtx.destination);
+    const startAt = audioCtx.currentTime + i*0.09;
+    osc.start(startAt);
+    gain.gain.exponentialRampToValueAtTime(0.12, startAt+0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, startAt+0.5);
+    osc.stop(startAt+0.55);
+  });
+}
+
 function heartbeatPulse(intensity) {
   if (!audioCtx) return;
   const osc = audioCtx.createOscillator();
@@ -648,17 +804,21 @@ function animate() {
     flicker.intensity = 1.0 + Math.sin(t*10)*0.1 + (Math.random()-0.5)*0.05;
 
     // Hallway flickering lights (subset of bulbs), independent random flicker
-    for (const fl of flickerLights) {
-      if (Math.random() < 0.02) fl.intensity = 0.05;
-      else if (Math.random() < 0.1) fl.intensity = 0.7 + Math.random()*0.3;
+    // Only iterate currently loaded chunks -- prevents unbounded growth as chunks stream in/out
+    for (const c of chunks.values()) {
+      for (const fl of c.flickerLights) {
+        if (Math.random() < 0.02) fl.intensity = 0.05;
+        else if (Math.random() < 0.1) fl.intensity = 0.7 + Math.random()*0.3;
+      }
     }
 
     // Flashlight rare flicker
-    if (flashOn) {
+    if (flashMode > 0) {
       flashFlickerTimer -= delta;
       if (flashFlickerTimer <= 0) {
+        const modeAtFlicker = flashMode;
         flashlight.intensity = FLASHLIGHT_BASE_INTENSITY * 0.15;
-        setTimeout(()=>{ if(flashOn) flashlight.intensity = FLASHLIGHT_BASE_INTENSITY; }, 90+Math.random()*120);
+        setTimeout(()=>{ if(flashMode === modeAtFlicker) flashlight.intensity = FLASHLIGHT_BASE_INTENSITY; }, 90+Math.random()*120);
         flashFlickerTimer = 4 + Math.random()*7;
       }
     }
@@ -671,6 +831,9 @@ function animate() {
       const dxs = obj.position.x - s.worldX, dzs = obj.position.z - s.worldZ;
       if (dxs*dxs+dzs*dzs < 2.2*2.2) {
         s.found = true; foundCount++; foundSpan.textContent = foundCount;
+        if (s.mesh.parent) s.mesh.parent.remove(s.mesh);
+        if (s.glow && s.glow.parent) s.glow.parent.remove(s.glow);
+        playChime();
       }
     }
 
