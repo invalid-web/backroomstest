@@ -865,6 +865,7 @@ let entityPos = new THREE.Vector3();
 let entityGX = 0, entityGZ = 0;
 let entitySpawnTimer = 10 + Math.random()*8;
 let sanity = 100;
+let insanityFactor = 0; // 0 = full sanity, 1 = total insanity
 const sanityFill = document.getElementById('sanityFill');
 const sanityPct = document.getElementById('sanityPct');
 function updateSanityUI(val) {
@@ -958,6 +959,28 @@ function initAudio() {
   noiseSrc.connect(staticFilter).connect(staticGain).connect(audioCtx.destination);
   noiseSrc.start();
 }
+function playInsanityWhisper() {
+  if (!audioCtx) return;
+  const bufferSize = Math.floor(audioCtx.sampleRate * 0.6);
+  const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < bufferSize; i++) {
+    const p = i / bufferSize;
+    const envelope = Math.sin(p * Math.PI);
+    data[i] = (Math.random() * 2 - 1) * envelope * 0.4;
+  }
+  const src = audioCtx.createBufferSource();
+  src.buffer = buffer;
+  const filter = audioCtx.createBiquadFilter();
+  filter.type = 'bandpass';
+  filter.frequency.value = 260 + insanityFactor * 260;
+  filter.Q.value = 1.3;
+  const gain = audioCtx.createGain();
+  gain.gain.value = 0.14 + insanityFactor * 0.14;
+  src.connect(filter).connect(gain).connect(audioCtx.destination);
+  src.start();
+}
+
 controls.addEventListener('lock', () => { if(!audioCtx) initAudio(); });
 
 let bobPhase = 0;
@@ -1061,6 +1084,76 @@ function applyDistortion(amt, t) {
   } else {
     renderer.domElement.style.filter = 'none';
     renderer.domElement.style.transform = 'none';
+  }
+}
+
+
+// --- Progressive anomalies (feature 2): runtime-only, injected into already-loaded chunks ---
+const runtimeAnomalyMat = {
+  lamp: new THREE.MeshStandardMaterial({color:0xf4f0e2, roughness:0.5}),
+  tvFrame: new THREE.MeshStandardMaterial({color:0x181818, roughness:0.7}),
+  tvGlass: new THREE.MeshStandardMaterial({color:0x101820, roughness:0.4, metalness:0.6}),
+  panel: new THREE.MeshStandardMaterial({color:0xe8e4d8, roughness:0.5})
+};
+function buildTiltedLampAnomaly() {
+  const g = new THREE.Group();
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.05,1.3,10), runtimeAnomalyMat.lamp);
+  pole.position.y = 0.65;
+  const shade = new THREE.Mesh(new THREE.ConeGeometry(0.25,0.3,12), runtimeAnomalyMat.lamp);
+  shade.position.y = 1.4; shade.rotation.x = 0.4;
+  g.add(pole, shade);
+  g.rotation.z = (Math.random()-0.5)*0.4;
+  return g;
+}
+function buildBrokenTVAnomaly() {
+  const g = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.9,0.6,0.5), runtimeAnomalyMat.tvFrame);
+  body.position.y = 0.45;
+  const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.7,0.4), runtimeAnomalyMat.tvGlass);
+  screen.position.set(0,0.48,0.26);
+  g.add(body, screen);
+  g.rotation.y = (Math.random()-0.5)*Math.PI;
+  return g;
+}
+function buildHangingPanelsAnomaly() {
+  const g = new THREE.Group();
+  const geo = new THREE.BoxGeometry(0.7,0.25,0.05);
+  for (let i=0;i<3;i++) {
+    const panel = new THREE.Mesh(geo, runtimeAnomalyMat.panel);
+    panel.position.set((i-1)*0.5, 1.5+i*0.1, 0);
+    panel.rotation.z = (Math.random()-0.5)*0.4;
+    g.add(panel);
+  }
+  return g;
+}
+let anomalySpawnCooldown = 0;
+const activeAnomalies = [];
+function spawnRuntimeAnomaly(playerPos) {
+  const cx = Math.floor(playerPos.x/(CELL_SIZE*MAZE_N));
+  const cz = Math.floor(playerPos.z/(CELL_SIZE*MAZE_N));
+  const chunk = chunks.get(chunkKey(cx,cz));
+  if (!chunk || !chunk.group) return;
+  const ox = playerPos.x + (Math.random()-0.5)*6;
+  const oz = playerPos.z + (Math.random()-0.5)*6;
+  const pick = Math.random();
+  let obj;
+  if (pick < 0.34) obj = buildTiltedLampAnomaly();
+  else if (pick < 0.67) obj = buildBrokenTVAnomaly();
+  else obj = buildHangingPanelsAnomaly();
+  obj.position.set(ox, 0, oz);
+  chunk.group.add(obj);
+  activeAnomalies.push({obj, chunkRef: chunk, spawnedAt: performance.now()});
+  if (activeAnomalies.length > 12) {
+    const old = activeAnomalies.shift();
+    old.chunkRef.group.remove(old.obj);
+  }
+}
+function updateAnomalies(delta, playerPos) {
+  anomalySpawnCooldown -= delta;
+  if (insanityFactor > 0.3 && anomalySpawnCooldown <= 0) {
+    const chance = (insanityFactor - 0.3) * 0.6;
+    if (Math.random() < chance) spawnRuntimeAnomaly(playerPos);
+    anomalySpawnCooldown = 2.5 + Math.random()*3;
   }
 }
 
@@ -1235,6 +1328,7 @@ function animate() {
       const proximity = Math.max(0, 1 - distToPlayer/14);
       sanity -= proximity*16*delta;
       sanity = Math.max(0, sanity);
+      insanityFactor = (100 - sanity) / 100;
       updateSanityUI(sanity);
       vignette.style.opacity = Math.min(0.85, (1-sanity/100)*0.9 + proximity*0.3);
 
@@ -1260,12 +1354,26 @@ function animate() {
       }
     } else {
       sanity = Math.min(100, sanity + 5*delta);
+      insanityFactor = (100 - sanity) / 100;
       updateSanityUI(sanity);
       const cur = parseFloat(vignette.style.opacity)||0;
       vignette.style.opacity = Math.max(0, cur-delta*0.3);
       if (staticGain) staticGain.gain.value += (0 - staticGain.gain.value)*0.1;
       smoothedDistort += (0 - smoothedDistort) * 0.08;
       applyDistortion(smoothedDistort, t);
+    }
+  }
+
+  // --- Insanity-driven sensory distortion (feature 1) ---
+  if (insanityFactor > 0.02 && camera) {
+    const wobble = insanityFactor * 0.005;
+    camera.rotation.z += (Math.sin(t*4.3)*wobble - camera.rotation.z*0.02) * 0.15;
+    const insanityDistort = insanityFactor * insanityFactor * 0.6;
+    smoothedDistort = Math.max(smoothedDistort, smoothedDistort + (insanityDistort - smoothedDistort) * 0.03);
+    applyDistortion(smoothedDistort, t);
+    if (audioCtx && Math.random() < insanityFactor * 0.006) playInsanityWhisper();
+    if (controls && controls.getObject) {
+      updateAnomalies(delta, controls.getObject().position);
     }
   }
 
