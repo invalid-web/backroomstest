@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>v.33</title>
+<title>v.34</title>
 <style>
   html,body{margin:0;padding:0;overflow:hidden;background:#000;font-family:monospace;}
   #blocker{position:absolute;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.9);
@@ -12,7 +12,7 @@
   #crosshair{position:absolute;top:50%;left:50%;width:6px;height:6px;margin:-3px;
     background:rgba(255,255,255,0.7);border-radius:50%;z-index:5;pointer-events:none;}
   #hud{position:absolute;bottom:10px;left:10px;color:#c9b458;z-index:5;font-size:12px;opacity:0.7;}
-  #sanityBar{position:absolute;bottom:12px;right:12px;width:200px;z-index:5;
+  #sanityBar{position:absolute;top:12px;right:12px;width:200px;z-index:5;
     background:rgba(10,10,8,0.55);border:1px solid #6b6142;border-radius:6px;padding:8px 10px;
     box-shadow:0 0 12px rgba(0,0,0,0.5);}
   #sanityLabel{color:#c9b458;font-size:9px;letter-spacing:3px;margin-bottom:4px;opacity:0.9;font-family:'Press Start 2P',system-ui,monospace;text-shadow:0 0 3px rgba(0,0,0,0.8);}
@@ -49,9 +49,10 @@
 <div id="mobileButtons" style="display:none;position:fixed;bottom:30px;right:30px;z-index:12;flex-direction:column;gap:14px;">
   <button id="btnFlashlight" style="width:64px;height:64px;border-radius:50%;background:rgba(255,255,255,0.15);border:2px solid rgba(255,255,255,0.4);color:#fff;font-size:22px;font-family:monospace;">F</button>
   <button id="btnDoor" style="width:64px;height:64px;border-radius:50%;background:rgba(255,255,255,0.15);border:2px solid rgba(255,255,255,0.4);color:#fff;font-size:14px;font-family:monospace;">DOOR</button>
+  <button id="btnSprint" style="width:64px;height:64px;border-radius:50%;background:rgba(255,255,255,0.15);border:2px solid rgba(255,255,255,0.4);color:#fff;font-size:11px;font-family:monospace;">RUN</button>
 </div>
 <div id="hud">Cell: <span id="cellPos">0,0</span> | FPS: <span id="fps">--</span></div>
-<div id="objective">Objective: find the 5 flickering exit signs.<br>Found: <span id="foundCount">0</span>/5</div>
+<div id="objective">Objective: find the 5 EXIT signs.<br>Found: <span id="foundCount">0</span>/5</div>
 <div id="sanityBar"><div id="sanityLabel">SANITY</div><div id="sanityTrack"><div id="sanityFill"></div></div><div id="sanityPct">100%</div></div>
 <div id="breathePrompt" style="position:absolute;bottom:70px;left:50%;transform:translateX(-50%);color:#c9d8d4;font-family:monospace;font-size:13px;opacity:0;transition:opacity 0.3s;text-align:center;pointer-events:none;">Hold [E] to breathe</div>
 <div id="vignette"></div>
@@ -380,6 +381,18 @@ if (isMobileDevice) {
     e.preventDefault();
     tryInteractDoor();
   }, {passive:false});
+  const btnSprintEl = document.getElementById('btnSprint');
+  btnSprintEl.addEventListener('touchstart', e => {
+    e.preventDefault();
+    keys['ShiftLeft'] = true;
+  }, {passive:false});
+  btnSprintEl.addEventListener('touchend', e => {
+    e.preventDefault();
+    keys['ShiftLeft'] = false;
+  }, {passive:false});
+  btnSprintEl.addEventListener('touchcancel', e => {
+    keys['ShiftLeft'] = false;
+  });
 }
 
 function triggerWrongRoom() {
