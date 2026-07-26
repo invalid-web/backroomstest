@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>v.32</title>
+<title>v.33</title>
 <style>
   html,body{margin:0;padding:0;overflow:hidden;background:#000;font-family:monospace;}
   #blocker{position:absolute;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.9);
@@ -45,6 +45,10 @@
 <div id="mobileJoystick" style="display:none;position:fixed;bottom:30px;left:30px;width:120px;height:120px;z-index:12;">
   <div id="joystickBase" style="position:absolute;width:120px;height:120px;border-radius:50%;background:rgba(255,255,255,0.08);border:2px solid rgba(255,255,255,0.25);"></div>
   <div id="joystickKnob" style="position:absolute;width:54px;height:54px;left:33px;top:33px;border-radius:50%;background:rgba(255,255,255,0.35);border:2px solid rgba(255,255,255,0.5);"></div>
+</div>
+<div id="mobileButtons" style="display:none;position:fixed;bottom:30px;right:30px;z-index:12;flex-direction:column;gap:14px;">
+  <button id="btnFlashlight" style="width:64px;height:64px;border-radius:50%;background:rgba(255,255,255,0.15);border:2px solid rgba(255,255,255,0.4);color:#fff;font-size:22px;font-family:monospace;">F</button>
+  <button id="btnDoor" style="width:64px;height:64px;border-radius:50%;background:rgba(255,255,255,0.15);border:2px solid rgba(255,255,255,0.4);color:#fff;font-size:14px;font-family:monospace;">DOOR</button>
 </div>
 <div id="hud">Cell: <span id="cellPos">0,0</span> | FPS: <span id="fps">--</span></div>
 <div id="objective">Objective: find the 5 flickering exit signs.<br>Found: <span id="foundCount">0</span>/5</div>
@@ -326,8 +330,7 @@ document.addEventListener('keyup', e => keys[e.code] = false);
 
 const doorRaycaster = new THREE.Raycaster();
 document.addEventListener('contextmenu', e => e.preventDefault());
-document.addEventListener('mousedown', e => {
-  if (e.button !== 2 || !(controls.isLocked || (isMobileDevice && mobileControlActive))) return;
+function tryInteractDoor() {
   doorRaycaster.setFromCamera(new THREE.Vector2(0,0), camera);
   let closestDoor = null, closestDist = 3.2;
   for (const d of allDoors) {
@@ -360,7 +363,24 @@ document.addEventListener('mousedown', e => {
       playDoorSound(closestDoor.isOpen);
     }
   }
+}
+document.addEventListener('mousedown', e => {
+  if (e.button !== 2 || !(controls.isLocked || (isMobileDevice && mobileControlActive))) return;
+  tryInteractDoor();
 });
+if (isMobileDevice) {
+  const mobileButtonsEl = document.getElementById('mobileButtons');
+  mobileButtonsEl.style.display = 'flex';
+  document.getElementById('btnFlashlight').addEventListener('touchstart', e => {
+    e.preventDefault();
+    flashMode = (flashMode+1) % FLASHLIGHT_MODES.length;
+    applyFlashMode();
+  }, {passive:false});
+  document.getElementById('btnDoor').addEventListener('touchstart', e => {
+    e.preventDefault();
+    tryInteractDoor();
+  }, {passive:false});
+}
 
 function triggerWrongRoom() {
   const obj = controls.getObject();
