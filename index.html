@@ -3,7 +3,6 @@
 <head>
 <meta charset="UTF-8">
 <title>b4ckr00m5</title>
-<link rel="icon" type="image/x-icon" href="https://static.thenounproject.com/png/chess-pawn-icon-629003-512.png">
 <style>
   html,body{margin:0;padding:0;overflow:hidden;background:#000;font-family:monospace;}
   #blocker{position:absolute;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.9);
@@ -43,6 +42,10 @@
   </div>
 </div>
 <div id="crosshair"></div>
+<div id="mobileJoystick" style="display:none;position:fixed;bottom:30px;left:30px;width:120px;height:120px;z-index:12;">
+  <div id="joystickBase" style="position:absolute;width:120px;height:120px;border-radius:50%;background:rgba(255,255,255,0.08);border:2px solid rgba(255,255,255,0.25);"></div>
+  <div id="joystickKnob" style="position:absolute;width:54px;height:54px;left:33px;top:33px;border-radius:50%;background:rgba(255,255,255,0.35);border:2px solid rgba(255,255,255,0.5);"></div>
+</div>
 <div id="hud">Cell: <span id="cellPos">0,0</span> | FPS: <span id="fps">--</span></div>
 <div id="objective">Objective: find the 5 flickering exit signs.<br>Found: <span id="foundCount">0</span>/5</div>
 <div id="sanityBar"><div id="sanityLabel">SANITY</div><div id="sanityTrack"><div id="sanityFill"></div></div><div id="sanityPct">100%</div></div>
@@ -204,9 +207,106 @@ function applyFlashMode() {
   FLASHLIGHT_BASE_INTENSITY = m.intensity;
 }
 
+// ================= MOBILE DETECTION + JOYSTICK =================
+const isMobileDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0) || window.matchMedia('(pointer: coarse)').matches;
+let mobileDirX = 0, mobileDirZ = 0;
+let mobileControlActive = false;
+let cameraYaw = 0, cameraPitch = 0;
+if (isMobileDevice) {
+  const joystickEl = document.getElementById('mobileJoystick');
+  const knobEl = document.getElementById('joystickKnob');
+  joystickEl.style.display = 'block';
+  let joyActive = false, joyTouchId = null, joyCenterX = 0, joyCenterY = 0;
+  const joyRadius = 45;
+  function joyStart(e) {
+    const t = e.changedTouches ? e.changedTouches[0] : e;
+    joyActive = true;
+    joyTouchId = e.changedTouches ? t.identifier : 'mouse';
+    const rect = joystickEl.getBoundingClientRect();
+    joyCenterX = rect.left + rect.width/2;
+    joyCenterY = rect.top + rect.height/2;
+    e.preventDefault();
+  }
+  function joyMove(e) {
+    if (!joyActive) return;
+    let t = null;
+    if (e.changedTouches) {
+      for (const touch of e.changedTouches) if (touch.identifier === joyTouchId) t = touch;
+      if (!t) return;
+    } else t = e;
+    let dx = t.clientX - joyCenterX, dy = t.clientY - joyCenterY;
+    const dist = Math.sqrt(dx*dx+dy*dy);
+    if (dist > joyRadius) { dx = dx/dist*joyRadius; dy = dy/dist*joyRadius; }
+    knobEl.style.left = (33+dx) + 'px';
+    knobEl.style.top = (33+dy) + 'px';
+    mobileDirX = dx/joyRadius;
+    mobileDirZ = dy/joyRadius;
+    e.preventDefault();
+  }
+  function joyEnd(e) {
+    if (e.changedTouches) {
+      let matched = false;
+      for (const touch of e.changedTouches) if (touch.identifier === joyTouchId) matched = true;
+      if (!matched) return;
+    }
+    joyActive = false;
+    joyTouchId = null;
+    mobileDirX = 0; mobileDirZ = 0;
+    knobEl.style.left = '33px';
+    knobEl.style.top = '33px';
+  }
+  joystickEl.addEventListener('touchstart', joyStart, {passive:false});
+  joystickEl.addEventListener('touchmove', joyMove, {passive:false});
+  joystickEl.addEventListener('touchend', joyEnd);
+  joystickEl.addEventListener('touchcancel', joyEnd);
+
+  // Touch-drag look controls (right half of screen), since Pointer Lock is unreliable on mobile
+  let lookTouchId = null, lookLastX = 0, lookLastY = 0;
+  const LOOK_SENSITIVITY = 0.0028;
+  function lookStart(e) {
+    for (const t of e.changedTouches) {
+      if (t.clientX > window.innerWidth * 0.5 && lookTouchId === null) {
+        lookTouchId = t.identifier;
+        lookLastX = t.clientX; lookLastY = t.clientY;
+        e.preventDefault();
+        break;
+      }
+    }
+  }
+  function lookMove(e) {
+    for (const t of e.changedTouches) {
+      if (t.identifier === lookTouchId) {
+        const dx = t.clientX - lookLastX, dy = t.clientY - lookLastY;
+        lookLastX = t.clientX; lookLastY = t.clientY;
+        cameraYaw -= dx * LOOK_SENSITIVITY;
+        cameraPitch -= dy * LOOK_SENSITIVITY;
+        cameraPitch = Math.max(-Math.PI/2 + 0.05, Math.min(Math.PI/2 - 0.05, cameraPitch));
+        e.preventDefault();
+        break;
+      }
+    }
+  }
+  function lookEnd(e) {
+    for (const t of e.changedTouches) {
+      if (t.identifier === lookTouchId) { lookTouchId = null; break; }
+    }
+  }
+  document.body.addEventListener('touchstart', lookStart, {passive:false});
+  document.body.addEventListener('touchmove', lookMove, {passive:false});
+  document.body.addEventListener('touchend', lookEnd);
+  document.body.addEventListener('touchcancel', lookEnd);
+}
+
 // ================= CONTROLS =================
 const controls = new PointerLockControls(camera, document.body);
-blocker.addEventListener('click', () => controls.lock());
+blocker.addEventListener('click', () => {
+  if (isMobileDevice) {
+    blocker.style.display = 'none';
+    mobileControlActive = true;
+  } else {
+    controls.lock();
+  }
+});
 controls.addEventListener('lock', () => blocker.style.display = 'none');
 controls.addEventListener('unlock', () => { if(!gameOver) blocker.style.display = 'flex'; });
 document.addEventListener('pointerlockerror', () => {
@@ -227,7 +327,7 @@ document.addEventListener('keyup', e => keys[e.code] = false);
 const doorRaycaster = new THREE.Raycaster();
 document.addEventListener('contextmenu', e => e.preventDefault());
 document.addEventListener('mousedown', e => {
-  if (e.button !== 2 || !controls.isLocked) return;
+  if (e.button !== 2 || !(controls.isLocked || (isMobileDevice && mobileControlActive))) return;
   doorRaycaster.setFromCamera(new THREE.Vector2(0,0), camera);
   let closestDoor = null, closestDist = 3.2;
   for (const d of allDoors) {
@@ -1950,13 +2050,22 @@ function animate() {
   camera.fov = 74 + Math.sin(t*0.15)*0.8;
   camera.updateProjectionMatrix();
 
-  if (controls.isLocked) {
+  if (controls.isLocked || (isMobileDevice && mobileControlActive)) {
+    if (isMobileDevice && mobileControlActive) {
+      camera.rotation.order = 'YXZ';
+      camera.rotation.y = cameraYaw;
+      camera.rotation.x = cameraPitch;
+    }
     const speed = (keys['ShiftLeft']||keys['ShiftRight']) ? SPRINT_SPEED : WALK_SPEED;
     dir.set(0,0,0);
     if (keys['KeyW']) dir.z -= 1;
     if (keys['KeyS']) dir.z += 1;
     if (keys['KeyA']) dir.x -= 1;
     if (keys['KeyD']) dir.x += 1;
+    if (isMobileDevice && (mobileDirX !== 0 || mobileDirZ !== 0)) {
+      dir.x = mobileDirX;
+      dir.z = mobileDirZ;
+    }
     if (dir.lengthSq()>0) dir.normalize();
 
     const forward = new THREE.Vector3();
